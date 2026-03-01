@@ -24,8 +24,11 @@ export interface IStorage {
   getAgentPersonas(): Promise<AgentPersona[]>;
   getAgentPersona(id: number): Promise<AgentPersona | undefined>;
   createAgentPersona(agent: InsertAgentPersona): Promise<AgentPersona>;
+  updateAgentPersona(id: number, agent: Partial<InsertAgentPersona>): Promise<AgentPersona | undefined>;
+  deleteAgentPersona(id: number): Promise<void>;
 
   getMeetings(workspaceId: number): Promise<Meeting[]>;
+  getAllMeetings(): Promise<Meeting[]>;
   getMeeting(id: number): Promise<Meeting | undefined>;
   createMeeting(meeting: InsertMeeting): Promise<Meeting>;
   updateMeetingStatus(id: number, status: string): Promise<Meeting | undefined>;
@@ -88,9 +91,19 @@ export class DatabaseStorage implements IStorage {
     const [created] = await db.insert(agentPersonas).values(agent).returning();
     return created;
   }
+  async updateAgentPersona(id: number, agent: Partial<InsertAgentPersona>) {
+    const [updated] = await db.update(agentPersonas).set(agent).where(eq(agentPersonas.id, id)).returning();
+    return updated;
+  }
+  async deleteAgentPersona(id: number) {
+    await db.delete(agentPersonas).where(eq(agentPersonas.id, id));
+  }
 
   async getMeetings(workspaceId: number) {
     return db.select().from(meetings).where(eq(meetings.workspaceId, workspaceId)).orderBy(desc(meetings.createdAt));
+  }
+  async getAllMeetings() {
+    return db.select().from(meetings);
   }
   async getMeeting(id: number) {
     const [m] = await db.select().from(meetings).where(eq(meetings.id, id));

@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { AgentAvatar } from "@/components/agent-avatar";
 import {
@@ -20,7 +21,7 @@ import {
   Clock, Circle, CheckCircle, AlertCircle, Users, Sparkles,
   Rocket, FlaskConical, TrendingUp, Briefcase, Play, Loader2,
   Bot, Zap, Eye, FileCode, Brain, Download, Shield, GitBranch,
-  ChevronDown, ChevronRight, Target,
+  ChevronDown, ChevronRight, Target, Pencil, Trash2, Volume2,
 } from "lucide-react";
 import type { Workspace, Meeting, AgentPersona, Artifact, Decision, Task } from "@shared/schema";
 
@@ -662,6 +663,298 @@ function DecisionMemoryTab({ workspaceId }: { workspaceId: number }) {
   );
 }
 
+const AGENT_COLORS = [
+  "#3B82F6", "#8B5CF6", "#10B981", "#F59E0B", "#EF4444",
+  "#EC4899", "#6366F1", "#14B8A6", "#F97316", "#06B6D4",
+];
+
+function AgentsTab() {
+  const { toast } = useToast();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [editingAgent, setEditingAgent] = useState<AgentPersona | null>(null);
+  const [name, setName] = useState("");
+  const [role, setRole] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [color, setColor] = useState(AGENT_COLORS[0]);
+  const [voiceId, setVoiceId] = useState("");
+  const [previewVoiceLoading, setPreviewVoiceLoading] = useState(false);
+
+  const { data: agents, isLoading } = useQuery<AgentPersona[]>({
+    queryKey: ["/api/agents"],
+  });
+
+  const { data: elevenLabsVoices } = useQuery<{ voice_id: string; name: string; labels: Record<string, string> }[]>({
+    queryKey: ["/api/tts/voices"],
+    queryFn: () => fetch("/api/tts/voices").then(r => r.json()),
+  });
+
+  const createMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/agents", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      resetForm();
+      toast({ title: "Agent created" });
+    },
+    onError: () => toast({ title: "Failed to create agent", variant: "destructive" }),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: any }) => apiRequest("PATCH", `/api/agents/${id}`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      resetForm();
+      toast({ title: "Agent updated" });
+    },
+    onError: () => toast({ title: "Failed to update agent", variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/agents/${id}`);
+      const body = await res.json();
+      if (body.error) throw new Error(body.error);
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      toast({ title: "Agent deleted" });
+    },
+    onError: (err: Error) => toast({ title: err.message || "Failed to delete agent", variant: "destructive" }),
+  });
+
+  const resetForm = () => {
+    setDialogOpen(false);
+    setEditingAgent(null);
+    setName("");
+    setRole("");
+    setSystemPrompt("");
+    setColor(AGENT_COLORS[0]);
+    setVoiceId("");
+  };
+
+  const openEdit = (agent: AgentPersona) => {
+    setEditingAgent(agent);
+    setName(agent.name);
+    setRole(agent.role);
+    setSystemPrompt(agent.systemPrompt);
+    setColor(agent.color || AGENT_COLORS[0]);
+    setVoiceId(agent.voiceId || "");
+    setDialogOpen(true);
+  };
+
+  const openCreate = () => {
+    resetForm();
+    setDialogOpen(true);
+  };
+
+  const handleSubmit = () => {
+    if (!name.trim() || !role.trim() || !systemPrompt.trim()) {
+      toast({ title: "Please fill in all required fields", variant: "destructive" });
+      return;
+    }
+
+    const payload = {
+      name: name.trim(),
+      role: role.trim(),
+      systemPrompt: systemPrompt.trim(),
+      color,
+      voiceId: voiceId && voiceId !== "none" ? voiceId : null,
+    };
+
+    if (editingAgent) {
+      updateMutation.mutate({ id: editingAgent.id, data: payload });
+    } else {
+      createMutation.mutate(payload);
+    }
+  };
+
+  const previewVoice = async (vId: string) => {
+    if (!vId || vId === "none") return;
+    setPreviewVoiceLoading(true);
+    try {
+      const res = await fetch("/api/tts/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `Hello, I'm ${name || "your AI agent"}. I'm ready to help with ${role || "your project"}.`, agentName: name || "preview", voiceId: vId }),
+      });
+      if (!res.ok) throw new Error("Preview failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play();
+    } catch {
+      toast({ title: "Voice preview failed", variant: "destructive" });
+    } finally {
+      setPreviewVoiceLoading(false);
+    }
+  };
+
+  if (isLoading) {
+    return <div className="space-y-3">{[1, 2, 3].map(i => <Skeleton key={i} className="h-20 w-full" />)}</div>;
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <h3 className="font-medium text-foreground">AI Agents</h3>
+        <Button size="sm" onClick={openCreate} data-testid="button-add-agent">
+          <Plus className="w-4 h-4 mr-1.5" />
+          Add Agent
+        </Button>
+      </div>
+
+      <div className="grid gap-3">
+        {agents?.map(agent => (
+          <Card key={agent.id} className="p-4" data-testid={`card-agent-${agent.id}`}>
+            <div className="flex items-start gap-3">
+              <AgentAvatar avatar={agent.avatar} color={agent.color} size="md" name={agent.name} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="font-medium text-foreground" data-testid={`text-agent-name-${agent.id}`}>{agent.name}</span>
+                  <Badge variant="secondary" className="text-[10px]">{agent.role}</Badge>
+                  {agent.voiceId && (
+                    <Badge variant="outline" className="text-[10px] gap-0.5">
+                      <Volume2 className="w-2.5 h-2.5" />
+                      Voice
+                    </Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground line-clamp-2">{agent.systemPrompt}</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(agent)} data-testid={`button-edit-agent-${agent.id}`}>
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-destructive"
+                  onClick={() => {
+                    if (confirm(`Delete agent "${agent.name}"?`)) {
+                      deleteMutation.mutate(agent.id);
+                    }
+                  }}
+                  data-testid={`button-delete-agent-${agent.id}`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </div>
+          </Card>
+        ))}
+
+        {(!agents || agents.length === 0) && (
+          <div className="text-center py-12 text-muted-foreground">
+            <Bot className="w-10 h-10 mx-auto mb-3 opacity-40" />
+            <p className="text-sm">No agents yet. Create your first AI agent to get started.</p>
+          </div>
+        )}
+      </div>
+
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!open) resetForm(); else setDialogOpen(true); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editingAgent ? "Edit Agent" : "Create Agent"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 mt-2">
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1.5 block">Name *</label>
+              <Input
+                data-testid="input-agent-name"
+                placeholder="e.g. Atlas, Luna, Kai..."
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1.5 block">Role *</label>
+              <Input
+                data-testid="input-agent-role"
+                placeholder="e.g. Strategy Advisor, Legal Expert, Marketing Lead..."
+                value={role}
+                onChange={(e) => setRole(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1.5 block">System Prompt *</label>
+              <Textarea
+                data-testid="input-agent-prompt"
+                placeholder="Define this agent's personality, expertise, and behavior..."
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                rows={4}
+                className="resize-none"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1.5 block">Color</label>
+              <div className="flex gap-2 flex-wrap">
+                {AGENT_COLORS.map(c => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`w-7 h-7 rounded-full border-2 transition-all ${color === c ? "border-foreground scale-110" : "border-transparent"}`}
+                    style={{ backgroundColor: c }}
+                    onClick={() => setColor(c)}
+                    data-testid={`button-color-${c.replace("#", "")}`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-sm font-medium text-foreground mb-1.5 block">Voice</label>
+              <div className="flex gap-2">
+                <Select value={voiceId} onValueChange={setVoiceId}>
+                  <SelectTrigger data-testid="select-agent-voice" className="flex-1">
+                    <SelectValue placeholder="Select a voice (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No voice</SelectItem>
+                    {elevenLabsVoices?.map(v => (
+                      <SelectItem key={v.voice_id} value={v.voice_id} data-testid={`option-voice-${v.voice_id}`}>
+                        {v.name} — {v.labels?.gender || "?"}, {v.labels?.accent || "?"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {voiceId && voiceId !== "none" && (
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="shrink-0"
+                    onClick={() => previewVoice(voiceId)}
+                    disabled={previewVoiceLoading}
+                    data-testid="button-preview-voice"
+                  >
+                    <Volume2 className="w-4 h-4" />
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={resetForm} data-testid="button-cancel-agent">Cancel</Button>
+              <Button
+                onClick={handleSubmit}
+                disabled={createMutation.isPending || updateMutation.isPending}
+                data-testid="button-save-agent"
+              >
+                {(createMutation.isPending || updateMutation.isPending) && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
+                {editingAgent ? "Save Changes" : "Create Agent"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 export default function WorkspacePage() {
   const params = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
@@ -741,6 +1034,10 @@ export default function WorkspacePage() {
               <Brain className="w-4 h-4 mr-1.5" />
               Decision Memory
             </TabsTrigger>
+            <TabsTrigger value="agents" data-testid="tab-agents">
+              <Bot className="w-4 h-4 mr-1.5" />
+              Agents
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="meetings">
@@ -757,6 +1054,9 @@ export default function WorkspacePage() {
           </TabsContent>
           <TabsContent value="memory">
             <DecisionMemoryTab workspaceId={workspaceId} />
+          </TabsContent>
+          <TabsContent value="agents">
+            <AgentsTab />
           </TabsContent>
         </Tabs>
       </div>

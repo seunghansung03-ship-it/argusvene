@@ -1,7 +1,9 @@
+import { storage } from "./storage";
+
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const BASE_URL = "https://api.elevenlabs.io/v1";
 
-const AGENT_VOICE_MAP: Record<string, string> = {
+const DEFAULT_VOICE_MAP: Record<string, string> = {
   "Atlas": "onwK4e9ZLuTAKqWW03F9",
   "Nova": "Xb7hH8MSUJpSbSDYk0k2",
   "Sage": "cjVigY5qzO86Huf0OWal",
@@ -11,21 +13,46 @@ const AGENT_VOICE_MAP: Record<string, string> = {
 
 const DEFAULT_VOICE = "nPczCjzI2devNBz1zQrb";
 
-export function getVoiceIdForAgent(agentName: string): string {
-  return AGENT_VOICE_MAP[agentName] || DEFAULT_VOICE;
+export async function getVoiceIdForAgent(agentName: string): Promise<string> {
+  const agents = await storage.getAgentPersonas();
+  const agent = agents.find(a => a.name === agentName);
+  if (agent?.voiceId) return agent.voiceId;
+  return DEFAULT_VOICE_MAP[agentName] || DEFAULT_VOICE;
 }
 
 export function isElevenLabsAvailable(): boolean {
   return !!ELEVENLABS_API_KEY;
 }
 
+export async function fetchElevenLabsVoices(): Promise<{ voice_id: string; name: string; labels: Record<string, string> }[]> {
+  if (!ELEVENLABS_API_KEY) return [];
+
+  try {
+    const response = await fetch(`${BASE_URL}/voices`, {
+      headers: { "xi-api-key": ELEVENLABS_API_KEY },
+    });
+
+    if (!response.ok) return [];
+
+    const data = await response.json();
+    return (data.voices || []).map((v: any) => ({
+      voice_id: v.voice_id,
+      name: v.name,
+      labels: v.labels || {},
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export async function synthesizeSpeech(
   text: string,
-  agentName: string
+  agentName: string,
+  overrideVoiceId?: string
 ): Promise<Buffer | null> {
   if (!ELEVENLABS_API_KEY) return null;
 
-  const voiceId = getVoiceIdForAgent(agentName);
+  const voiceId = overrideVoiceId || await getVoiceIdForAgent(agentName);
 
   const cleaned = text
     .replace(/\*\*/g, "")
@@ -74,9 +101,10 @@ export async function synthesizeSpeech(
   }
 }
 
-export function getAvailableVoices(): { agentName: string; voiceId: string }[] {
-  return Object.entries(AGENT_VOICE_MAP).map(([agentName, voiceId]) => ({
-    agentName,
-    voiceId,
+export async function getAvailableVoices(): Promise<{ agentName: string; voiceId: string }[]> {
+  const agents = await storage.getAgentPersonas();
+  return agents.map(a => ({
+    agentName: a.name,
+    voiceId: a.voiceId || DEFAULT_VOICE_MAP[a.name] || DEFAULT_VOICE,
   }));
 }

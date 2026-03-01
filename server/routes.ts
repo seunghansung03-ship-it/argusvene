@@ -8,7 +8,8 @@ import { getAIClient, getAvailableProviders, getDefaultProvider, setDefaultProvi
 import { compileWorldState, generateMermaidDecisionTree, generateScenarioComparison } from "./world-compiler";
 import { evaluateParticipation, formatInterruptMessage } from "./ai-participant";
 import { createEmptyWorldState, type WorldState } from "../shared/types/worldstate";
-import { synthesizeSpeech, isElevenLabsAvailable, getAvailableVoices } from "./elevenlabs";
+import { synthesizeSpeech, isElevenLabsAvailable, getAvailableVoices, fetchElevenLabsVoices } from "./elevenlabs";
+import { insertAgentPersonaSchema } from "@shared/schema";
 
 const audioBodyParser = express.json({ limit: "50mb" });
 
@@ -96,6 +97,59 @@ export async function registerRoutes(
     } catch (e) {
       console.error("Error fetching agents:", e);
       res.status(500).json({ error: "Failed to fetch agents" });
+    }
+  });
+
+  app.post("/api/agents", async (req, res) => {
+    const parsed = insertAgentPersonaSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+
+    try {
+      const agent = await storage.createAgentPersona(parsed.data);
+      res.json(agent);
+    } catch (e) {
+      console.error("Error creating agent:", e);
+      res.status(500).json({ error: "Failed to create agent" });
+    }
+  });
+
+  app.patch("/api/agents/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID" });
+
+    const partial = insertAgentPersonaSchema.partial().safeParse(req.body);
+    if (!partial.success) return res.status(400).json({ error: partial.error.message });
+
+    try {
+      const updated = await storage.updateAgentPersona(id, partial.data);
+      if (!updated) return res.status(404).json({ error: "Agent not found" });
+      res.json(updated);
+    } catch (e) {
+      console.error("Error updating agent:", e);
+      res.status(500).json({ error: "Failed to update agent" });
+    }
+  });
+
+  app.delete("/api/agents/:id", async (req, res) => {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: "Invalid agent ID" });
+
+    try {
+      const allMeetings = await storage.getAllMeetings();
+      const inUse = allMeetings.some(m => {
+        const ids = m.agentIds as number[] | null;
+        return ids && ids.includes(id);
+      });
+
+      if (inUse) {
+        return res.status(409).json({ error: "This agent is currently assigned to one or more meetings and cannot be deleted." });
+      }
+
+      await storage.deleteAgentPersona(id);
+      res.json({ success: true });
+    } catch (e) {
+      console.error("Error deleting agent:", e);
+      res.status(500).json({ error: "Failed to delete agent" });
     }
   });
 
@@ -671,23 +725,36 @@ Include WorldState context in your analysis. Be thorough and extract every actio
     }
   });
 
-  app.get("/api/tts/status", (_req, res) => {
+  app.get("/api/tts/status", async (_req, res) => {
     res.json({
       available: isElevenLabsAvailable(),
-      voices: getAvailableVoices(),
+      voices: await getAvailableVoices(),
     });
+  });
+
+  app.get("/api/tts/voices", async (_req, res) => {
+    try {
+      const voices = await fetchElevenLabsVoices();
+      res.json(voices);
+    } catch (error) {
+      console.error("Error fetching voices:", error);
+      res.status(500).json({ error: "Failed to fetch voices" });
+    }
   });
 
   app.post("/api/tts/synthesize", async (req, res) => {
     const parsed = z.object({
       text: z.string().min(1),
       agentName: z.string().default("co-founder"),
+      voiceId: z.string().optional(),
     }).safeParse(req.body);
 
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
 
     try {
-      const audioBuffer = await synthesizeSpeech(parsed.data.text, parsed.data.agentName);
+      const audioBuffer = parsed.data.voiceId
+        ? await synthesizeSpeech(parsed.data.text, parsed.data.agentName, parsed.data.voiceId)
+        : await synthesizeSpeech(parsed.data.text, parsed.data.agentName);
       if (!audioBuffer) {
         return res.status(503).json({ error: "TTS unavailable" });
       }

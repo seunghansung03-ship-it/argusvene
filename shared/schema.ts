@@ -40,6 +40,7 @@ export const agentPersonas = pgTable("agent_personas", {
   systemPrompt: text("system_prompt").notNull(),
   avatar: text("avatar"),
   color: text("color").default("#3B82F6"),
+  voiceId: text("voice_id"),
 });
 
 export const insertAgentPersonaSchema = createInsertSchema(agentPersonas).omit({

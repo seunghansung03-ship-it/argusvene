@@ -98,10 +98,12 @@ WorldState {
 - `POST /api/tasks/:id/execute` - OpenClaw task execution (SSE)
 - `GET /api/workspaces/:wsId/artifacts|decisions|tasks` - Document hub
 - `POST /api/quick-chat` - Quick ideation chat (SSE)
-- `GET /api/agents` - List AI agent personas
+- `GET/POST /api/agents` - List/create AI agent personas
+- `PATCH/DELETE /api/agents/:id` - Update/delete agent (delete blocked if in use)
 - `GET/POST /api/providers` - AI provider management
 - `GET /api/tts/status` - ElevenLabs availability + voice mapping
-- `POST /api/tts/synthesize` - Text-to-speech synthesis (returns audio/mpeg)
+- `POST /api/tts/synthesize` - Text-to-speech synthesis (returns audio/mpeg, optional voiceId override)
+- `GET /api/tts/voices` - List all ElevenLabs voices for voice selection
 
 ### SSE Event Types (Meeting Messages)
 - `user_message` - User's message saved
