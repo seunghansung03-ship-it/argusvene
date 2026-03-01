@@ -265,6 +265,41 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/meetings/:id/decision-memory", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const meeting = await storage.getMeeting(parseInt(req.params.id));
+      if (!meeting) return res.status(404).json({ error: "Not found" });
+      if (meeting.workspaceId) {
+        if (!(await verifyWorkspaceAccess(meeting.workspaceId, userId))) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      }
+      const ws = (meeting.worldState as WorldState) || createEmptyWorldState(`session-${meeting.id}`);
+      const messages = await storage.getMeetingMessages(parseInt(req.params.id));
+      res.json({
+        meetingId: meeting.id,
+        title: meeting.title,
+        sessionId: ws.sessionId,
+        version: ws.version,
+        decisions: ws.decisions,
+        assumptions: ws.assumptions,
+        options: ws.options,
+        scenarios: ws.scenarios,
+        constraints: ws.constraints,
+        transcript: messages.map(m => ({
+          speaker: m.senderName,
+          content: m.content,
+          timestamp: m.createdAt,
+        })),
+        exportedAt: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.error("Error fetching decision memory:", e);
+      res.status(500).json({ error: "Failed to fetch decision memory" });
+    }
+  });
+
   app.post("/api/meetings/:id/messages", async (req, res) => {
     const parsed = messageBodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
@@ -1307,6 +1342,47 @@ RULES:
         res.end();
       }
     }
+  });
+
+  // ─── Gemini Live API WebSocket ───
+  const geminiLiveWss = new WebSocketServer({ server: httpServer, path: "/ws/gemini-live" });
+
+  geminiLiveWss.on("connection", async (ws, req) => {
+    const wsUrl = new URL(req.url || "", `http://${req.headers.host}`);
+    const userId = wsUrl.searchParams.get("userId");
+    if (!userId) {
+      ws.send(JSON.stringify({ type: "error", message: "Authentication required" }));
+      ws.close();
+      return;
+    }
+    console.log(`[ws/gemini-live] Connected: ${userId}`);
+
+    const { createLiveSession, sendAudioChunk, sendTextMessage, destroyLiveSession } = await import("./gemini-live");
+
+    const sessionCreated = await createLiveSession(userId, ws);
+    if (!sessionCreated) {
+      ws.close();
+      return;
+    }
+
+    ws.on("message", async (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.type === "audio") {
+          await sendAudioChunk(userId, msg.data, msg.mimeType || "audio/pcm;rate=16000");
+        } else if (msg.type === "text") {
+          await sendTextMessage(userId, msg.content);
+        }
+      } catch (e: any) {
+        console.error("[ws/gemini-live] Message error:", e.message);
+      }
+    });
+
+    ws.on("close", async () => {
+      console.log(`[ws/gemini-live] Disconnected: ${userId}`);
+      await destroyLiveSession(userId);
+    });
   });
 
   // ─── Browser Navigator WebSocket (screenshot streaming) ───

@@ -7,14 +7,21 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 
 ### Layer 1: Voice/Text Input
 - **Live Mode** ("Go Live" button): Continuous STT → auto-send on 1.0s silence → agents respond with TTS → STT stays active for user interruption
-- Browser-based speech recognition (Web Speech API) for voice input
+- **Gemini Live Mode** ("Gemini Live" button): Direct voice-to-voice via Gemini 2.0 Flash Live API
+  - Server-side WebSocket proxy (`/ws/gemini-live`) → Google's Multimodal Live API
+  - Client captures PCM 16kHz via AudioWorklet (`pcm-capture-worklet.js`)
+  - Receives PCM 24kHz audio back, plays through AudioContext
+  - Native interruption support (Gemini detects user speaking during response)
+  - Co-founder persona with Aoede voice
+  - Files: `server/gemini-live.ts`, `client/src/hooks/use-gemini-live.ts`, `public/pcm-capture-worklet.js`
+- Browser-based speech recognition (Web Speech API) for standard voice input
 - ElevenLabs TTS auto-play in Live Mode with per-agent voices
 - **User Interruption**: In Live Mode, STT keeps listening during TTS playback. If user speaks (2+ words detected), TTS stops immediately, AI response is aborted, and user's new input takes priority
 - **Feedback prevention (text mode)**: STT pauses while TTS plays, resumes after TTS finishes. Live Mode uses interrupt-based approach instead.
 - `voiceModeRef` (ref) used in `handleSendMessage` useCallback to avoid stale closure bug
 - Text input fallback with manual send
 - Real-time transcript with speaker labels + interim transcript display
-- Visual indicators: LIVE badge, voice waveform animation, current speaker name
+- Visual indicators: LIVE badge (standard), GEMINI LIVE badge (Gemini mode), voice waveform animation, current speaker name
 - **Natural conversation prompts**: Agents speak conversationally (1-3 sentences, under 80 words, no markdown/name tags), show emotion, take stances
 - **Agent Selection (발언권 시스템)**: In text mode, after user types a message, agent selection buttons appear to pick who responds. Options: individual agents, or "Auto (AI picks)" for AI-routed selection. In Live Mode, auto-routing is used.
 - **Stop Response**: Button to abort AI mid-response. Uses AbortController on client + `res.on("close")` abort detection on server.
