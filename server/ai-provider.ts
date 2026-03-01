@@ -66,13 +66,20 @@ function createOpenAIClient(): AIClient {
 }
 
 function createGeminiClient(): AIClient {
-  const ai = new GoogleGenAI({
-    apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
-    httpOptions: {
-      apiVersion: "",
-      baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
-    },
-  });
+  const personalKey = process.env.GOOGLE_API_KEY;
+  const ai = personalKey
+    ? new GoogleGenAI({ apiKey: personalKey })
+    : new GoogleGenAI({
+        apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
+        httpOptions: {
+          apiVersion: "",
+          baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+        },
+      });
+
+  if (personalKey) {
+    console.log("[AI] Using personal GOOGLE_API_KEY for Gemini");
+  }
 
   function toGeminiMessages(messages: ChatMessage[]) {
     const systemInstruction = messages
