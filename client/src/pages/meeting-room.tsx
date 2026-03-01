@@ -73,7 +73,7 @@ function ChatPanel({
   const [isRecording, setIsRecording] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
-  const { speak, stop, isSpeaking } = useTTS();
+  const { speak, stop, isSpeaking, elevenLabsAvailable } = useTTS();
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -145,6 +145,11 @@ function ChatPanel({
             <Volume2 className="w-3 h-3 mr-1" />
             {voiceMode ? "Voice On" : "Voice Off"}
           </Button>
+          {voiceMode && elevenLabsAvailable && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-medium" data-testid="badge-elevenlabs">
+              ElevenLabs
+            </span>
+          )}
         </div>
       </div>
 
@@ -198,7 +203,7 @@ function ChatPanel({
                       variant="ghost"
                       size="sm"
                       className="h-5 px-1.5 mt-1 text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => speak(msg.content)}
+                      onClick={() => speak(msg.content, msg.senderName)}
                       data-testid={`button-speak-${msg.id}`}
                     >
                       <Volume2 className="w-2.5 h-2.5 mr-0.5" />
@@ -422,7 +427,7 @@ export default function MeetingRoom() {
   const [isWorldStateUpdating, setIsWorldStateUpdating] = useState(false);
   const [interruptMessage, setInterruptMessage] = useState<string | null>(null);
   const [voiceMode, setVoiceMode] = useState(false);
-  const ttsQueueRef = useRef<string[]>([]);
+  const ttsQueueRef = useRef<{ text: string; agentName: string }[]>([]);
   const mainTTS = useTTS();
 
   const { data: meeting, isLoading: meetingLoading } = useQuery<Meeting>({
@@ -490,7 +495,7 @@ export default function MeetingRoom() {
             setStreamingMessages(prev => {
               const msg = prev.find(sm => sm.agentId === data.agentId);
               if (msg && voiceMode) {
-                ttsQueueRef.current.push(`${msg.agentName} says: ${msg.content}`);
+                ttsQueueRef.current.push({ text: msg.content, agentName: msg.agentName });
               }
               return prev.map(sm =>
                 sm.agentId === data.agentId
@@ -516,7 +521,7 @@ export default function MeetingRoom() {
             if (data.action?.interruptReason) {
               setInterruptMessage(data.action.interruptReason);
               if (voiceMode) {
-                ttsQueueRef.current.push(`Co-founder interrupts: ${data.action.interruptReason}`);
+                ttsQueueRef.current.push({ text: data.action.interruptReason, agentName: "co-founder" });
               }
             }
             setWorkflowStatus(prev => [...prev, "co-founder INTERRUPTED"]);
@@ -532,9 +537,9 @@ export default function MeetingRoom() {
             setStreamingMessages([]);
             queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
             if (voiceMode && ttsQueueRef.current.length > 0) {
-              const combinedText = ttsQueueRef.current.join(". ");
+              const items = [...ttsQueueRef.current];
               ttsQueueRef.current = [];
-              mainTTS.speak(combinedText);
+              items.forEach(item => mainTTS.speak(item.text, item.agentName));
             }
             break;
         }

@@ -8,6 +8,7 @@ import { getAIClient, getAvailableProviders, getDefaultProvider, setDefaultProvi
 import { compileWorldState, generateMermaidDecisionTree, generateScenarioComparison } from "./world-compiler";
 import { evaluateParticipation, formatInterruptMessage } from "./ai-participant";
 import { createEmptyWorldState, type WorldState } from "../shared/types/worldstate";
+import { synthesizeSpeech, isElevenLabsAvailable, getAvailableVoices } from "./elevenlabs";
 
 const audioBodyParser = express.json({ limit: "50mb" });
 
@@ -667,6 +668,36 @@ Include WorldState context in your analysis. Be thorough and extract every actio
     } catch (e) {
       console.error("Error fetching workspace decision memory:", e);
       res.status(500).json({ error: "Failed to fetch decision memory" });
+    }
+  });
+
+  app.get("/api/tts/status", (_req, res) => {
+    res.json({
+      available: isElevenLabsAvailable(),
+      voices: getAvailableVoices(),
+    });
+  });
+
+  app.post("/api/tts/synthesize", async (req, res) => {
+    const parsed = z.object({
+      text: z.string().min(1),
+      agentName: z.string().default("co-founder"),
+    }).safeParse(req.body);
+
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+
+    try {
+      const audioBuffer = await synthesizeSpeech(parsed.data.text, parsed.data.agentName);
+      if (!audioBuffer) {
+        return res.status(503).json({ error: "TTS unavailable" });
+      }
+
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Length", audioBuffer.length);
+      res.send(audioBuffer);
+    } catch (error) {
+      console.error("TTS error:", error);
+      res.status(500).json({ error: "TTS synthesis failed" });
     }
   });
 

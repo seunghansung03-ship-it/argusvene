@@ -41,6 +41,7 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 - **Database:** PostgreSQL with Drizzle ORM
 - **AI Provider:** Google Gemini (2.5 Flash) via Replit AI Integrations (primary)
 - **Provider Abstraction:** `server/ai-provider.ts` - Gemini default, OpenAI fallback
+- **TTS:** ElevenLabs API (per-agent unique voices), browser SpeechSynthesis fallback
 - **Visualization:** Mermaid.js for decision trees
 - **Routing:** wouter
 - **State:** TanStack React Query
@@ -80,6 +81,7 @@ WorldState {
 - `server/world-compiler.ts` - Transcript → WorldState compiler (Gemini)
 - `server/ai-participant.ts` - Interrupt + counterfactual engine (Gemini)
 - `server/ai-provider.ts` - Multi-provider AI abstraction
+- `server/elevenlabs.ts` - ElevenLabs TTS with per-agent voice mapping
 - `server/routes.ts` - All API routes including AI streaming
 - `server/storage.ts` - Database storage layer
 - `shared/schema.ts` - Drizzle schema definitions
@@ -98,6 +100,8 @@ WorldState {
 - `POST /api/quick-chat` - Quick ideation chat (SSE)
 - `GET /api/agents` - List AI agent personas
 - `GET/POST /api/providers` - AI provider management
+- `GET /api/tts/status` - ElevenLabs availability + voice mapping
+- `POST /api/tts/synthesize` - Text-to-speech synthesis (returns audio/mpeg)
 
 ### SSE Event Types (Meeting Messages)
 - `user_message` - User's message saved

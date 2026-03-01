@@ -1,60 +1,122 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 
 export function useTTS() {
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const [elevenLabsAvailable, setElevenLabsAvailable] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
+  const queueRef = useRef<{ text: string; agentName: string }[]>([]);
+  const isProcessingRef = useRef(false);
 
-  const speak = useCallback((text: string, onEnd?: () => void) => {
-    if (!("speechSynthesis" in window)) return;
+  useEffect(() => {
+    fetch("/api/tts/status")
+      .then(r => r.json())
+      .then(data => setElevenLabsAvailable(data.available))
+      .catch(() => setElevenLabsAvailable(false));
+  }, []);
 
-    window.speechSynthesis.cancel();
+  const playNext = useCallback(() => {
+    if (queueRef.current.length === 0) {
+      isProcessingRef.current = false;
+      setIsSpeaking(false);
+      return;
+    }
+
+    const item = queueRef.current.shift()!;
+    isProcessingRef.current = true;
+    setIsSpeaking(true);
+
+    if (elevenLabsAvailable) {
+      fetch("/api/tts/synthesize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: item.text, agentName: item.agentName }),
+      })
+        .then(res => {
+          if (!res.ok) throw new Error("TTS failed");
+          return res.blob();
+        })
+        .then(blob => {
+          const url = URL.createObjectURL(blob);
+          blobUrlRef.current = url;
+          const audio = new Audio(url);
+          audioRef.current = audio;
+
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            blobUrlRef.current = null;
+            audioRef.current = null;
+            playNext();
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            blobUrlRef.current = null;
+            audioRef.current = null;
+            playNext();
+          };
+
+          audio.play().catch(() => playNext());
+        })
+        .catch(() => {
+          fallbackSpeak(item.text, () => playNext());
+        });
+    } else {
+      fallbackSpeak(item.text, () => playNext());
+    }
+  }, [elevenLabsAvailable]);
+
+  const fallbackSpeak = useCallback((text: string, onEnd: () => void) => {
+    if (!("speechSynthesis" in window)) {
+      onEnd();
+      return;
+    }
 
     const cleaned = text
       .replace(/\*\*/g, "")
       .replace(/#{1,6}\s/g, "")
       .replace(/[`~]/g, "")
-      .replace(/\[.*?\]\(.*?\)/g, "")
       .replace(/\n{2,}/g, ". ")
       .replace(/\n/g, " ")
       .trim();
-
-    if (!cleaned) return;
 
     const maxLen = 800;
     const truncated = cleaned.length > maxLen ? cleaned.slice(0, maxLen) + "..." : cleaned;
 
     const utterance = new SpeechSynthesisUtterance(truncated);
     utterance.rate = 1.05;
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-
-    const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(
-      v => v.lang.startsWith("en") && v.name.toLowerCase().includes("google")
-    ) || voices.find(v => v.lang.startsWith("en")) || voices[0];
-
-    if (preferredVoice) utterance.voice = preferredVoice;
-
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => {
-      setIsSpeaking(false);
-      onEnd?.();
-    };
-    utterance.onerror = () => {
-      setIsSpeaking(false);
-      onEnd?.();
-    };
-
-    utteranceRef.current = utterance;
+    utterance.onend = onEnd;
+    utterance.onerror = () => onEnd();
     window.speechSynthesis.speak(utterance);
   }, []);
 
+  const speak = useCallback((text: string, agentName: string = "co-founder") => {
+    queueRef.current.push({ text, agentName });
+
+    if (!isProcessingRef.current) {
+      playNext();
+    }
+  }, [playNext]);
+
   const stop = useCallback(() => {
+    queueRef.current = [];
+    isProcessingRef.current = false;
+
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+
+    if (blobUrlRef.current) {
+      URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+    }
+
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
+
     setIsSpeaking(false);
   }, []);
 
-  return { speak, stop, isSpeaking };
+  return { speak, stop, isSpeaking, elevenLabsAvailable };
 }
