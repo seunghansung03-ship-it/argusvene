@@ -13,8 +13,13 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Send, Rocket, FlaskConical, TrendingUp, Briefcase,
   MessageSquare, FileText, CheckCircle2, ListTodo, ArrowRight,
-  Sparkles, X, CheckCircle, XCircle, Zap, Loader2, LogOut,
+  Sparkles, X, CheckCircle, XCircle, Zap, Loader2, LogOut, Trash2,
 } from "lucide-react";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useAuth } from "@/hooks/use-auth";
 import type { Workspace, Artifact, Decision, Task } from "@shared/schema";
 
@@ -184,7 +189,7 @@ function QuickIdeationBar() {
   );
 }
 
-function WorkspaceCard({ workspace, onClick }: { workspace: Workspace; onClick: () => void }) {
+function WorkspaceCard({ workspace, onClick, onDelete }: { workspace: Workspace; onClick: () => void; onDelete: () => void }) {
   const Icon = iconMap[workspace.icon || "briefcase"] || Briefcase;
 
   const { data: artifacts } = useQuery<Artifact[]>({
@@ -202,7 +207,7 @@ function WorkspaceCard({ workspace, onClick }: { workspace: Workspace; onClick: 
 
   return (
     <Card
-      className="p-5 cursor-pointer hover-elevate border-card-border group transition-all duration-200"
+      className="p-5 cursor-pointer border-card-border group transition-all duration-200"
       onClick={onClick}
       data-testid={`card-workspace-${workspace.id}`}
     >
@@ -218,7 +223,40 @@ function WorkspaceCard({ workspace, onClick }: { workspace: Workspace; onClick: 
             {workspace.description || "No description"}
           </p>
         </div>
-        <ArrowRight className="w-4 h-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1" />
+        <AlertDialog>
+          <AlertDialogTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+              onClick={(e) => e.stopPropagation()}
+              data-testid={`button-delete-workspace-${workspace.id}`}
+            >
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete workspace "{workspace.name}"?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete this workspace and all its meetings, decisions, tasks, and documents. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+                data-testid={`button-confirm-delete-workspace-${workspace.id}`}
+              >
+                Delete
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
       <div className="flex items-center gap-3 mt-4 flex-wrap">
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -258,6 +296,17 @@ export default function Dashboard() {
       setNewWsName("");
       setNewWsDesc("");
       toast({ title: "Workspace created" });
+    },
+  });
+
+  const deleteWorkspace = useMutation({
+    mutationFn: (id: number) => apiRequest("DELETE", `/api/workspaces/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/workspaces"] });
+      toast({ title: "Workspace deleted" });
+    },
+    onError: () => {
+      toast({ title: "Failed to delete workspace", variant: "destructive" });
     },
   });
 
@@ -367,6 +416,7 @@ export default function Dashboard() {
                 key={ws.id}
                 workspace={ws}
                 onClick={() => setLocation(`/workspace/${ws.id}`)}
+                onDelete={() => deleteWorkspace.mutate(ws.id)}
               />
             ))}
           </div>

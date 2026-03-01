@@ -280,12 +280,12 @@ function ChatPanel({
                   <div className="text-sm text-foreground mt-1 whitespace-pre-wrap leading-relaxed">
                     {msg.content}
                   </div>
-                  {!isHuman && !liveMode && (
+                  {!isHuman && (
                     <Button
                       variant="ghost"
                       size="sm"
                       className="h-5 px-1.5 mt-1 text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={() => speak(msg.content, msg.senderName)}
+                      onClick={(e) => { e.stopPropagation(); speak(msg.content, msg.senderName); }}
                       data-testid={`button-speak-${msg.id}`}
                     >
                       <Volume2 className="w-2.5 h-2.5 mr-0.5" />
@@ -364,8 +364,8 @@ function ChatPanel({
         )}
 
         {pendingAgentSelect && !isSending && (
-          <div className="px-1 py-2" data-testid="agent-select-panel">
-            <p className="text-[11px] text-muted-foreground mb-2">Who should respond?</p>
+          <div className="px-2 py-3 bg-primary/5 border border-primary/20 rounded-md mx-1 mb-1" data-testid="agent-select-panel">
+            <p className="text-[11px] font-medium text-primary mb-2">Select who should respond:</p>
             <div className="flex flex-wrap gap-1.5">
               {activeAgents.length > 0 ? (
                 <>

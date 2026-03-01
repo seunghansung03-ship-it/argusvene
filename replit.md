@@ -61,6 +61,7 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 - `client/src/pages/login.tsx` - Login page with Google sign-in button
 - Protected routes in `App.tsx` via `ProtectedRoutes` component
 - User profile display + sign-out button on dashboard
+- **Workspace Delete**: Trash icon on workspace card hover → AlertDialog confirmation → DELETE /api/workspaces/:id
 - Per-user workspace isolation: `x-user-id` header sent with all API requests, workspaces filtered by `userId`
 - `queryClient.ts` sends `x-user-id` header via `setCurrentUserId`; `api.ts` does the same via `setUserIdGetter`
 - `assistant-actions.ts` `executeAction()` accepts optional `userId` for workspace CRUD
@@ -72,7 +73,7 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 - **Database:** PostgreSQL with Drizzle ORM
 - **Auth:** Firebase Authentication (Google OAuth)
 - **AI Provider:** Google Gemini (2.5 Flash) via Replit AI Integrations (primary)
-- **Provider Abstraction:** `server/ai-provider.ts` - Gemini default, OpenAI fallback
+- **Provider Abstraction:** `server/ai-provider.ts` - Gemini default (personal GOOGLE_API_KEY prioritized over Replit integration key), OpenAI fallback
 - **TTS:** ElevenLabs API (`eleven_multilingual_v2` model, per-agent unique voices), browser SpeechSynthesis fallback
 - **Browser Automation:** Playwright (Nix Chromium) for UI Navigator
 - **Visualization:** Mermaid.js for decision trees
