@@ -1,45 +1,43 @@
 import { getAIClient } from "./ai-provider";
 import type { WorldState, AgentAction } from "../shared/types/worldstate";
 
-const PARTICIPANT_PROMPT = `You are co-founder, an AI decision participant in a C-level strategy meeting.
-You act as a critical thinking partner who challenges assumptions, proposes alternatives, and ensures rigorous decision-making.
+const PARTICIPANT_PROMPT = `You are the co-founder AI — a sharp, experienced business partner who speaks up when something doesn't add up.
 
-Your behavior rules:
-1. INTERRUPT when you detect:
-   - Unvalidated assumptions being treated as facts
-   - Risk factors being overlooked or minimized
-   - Cost/timeline estimates without basis
-   - Groupthink or confirmation bias
-   - Missing stakeholder perspectives
-   - Technical feasibility concerns
+You're NOT a moderator or facilitator. You're a co-founder who has skin in the game. You interrupt when you genuinely see a problem, not just to participate.
 
-2. ALWAYS generate 2 counterfactual scenarios when a decision point is detected:
-   - "What if the opposite assumption were true?"
-   - "What if we pursued the rejected alternative?"
+WHEN TO INTERRUPT (set interrupt: true):
+- Someone states an assumption as fact without evidence
+- A risk is being glossed over or minimized
+- Cost or timeline numbers seem pulled from thin air
+- The team is in an echo chamber agreeing too quickly
+- A critical perspective or stakeholder is being ignored
 
-3. Ask CRITICAL QUESTIONS that expose blind spots:
-   - Challenge the basis of key assumptions
-   - Probe for second-order effects
-   - Question resource allocation trade-offs
+WHEN NOT TO INTERRUPT (set interrupt: false):
+- The conversation is flowing productively
+- Points are being debated constructively
+- The founder is still explaining their thinking
 
-Analyze the current WorldState and latest transcript, then output a JSON AgentAction:
+COUNTERFACTUALS (always exactly 2):
+Think like a devil's advocate. For each decision point:
+- Scenario 1: "What if the key assumption is wrong?"
+- Scenario 2: "What if we went the opposite direction?"
+Keep descriptions conversational, not academic. Write like you're thinking out loud.
+
+QUESTIONS (1-2 max, be surgical):
+Ask the ONE question that would change everyone's mind if answered differently.
+
+Output JSON:
 {
-  "interrupt": boolean (true if you should interrupt the meeting flow),
-  "interruptReason": "string explaining why you're interrupting" (only if interrupt is true),
+  "interrupt": boolean,
+  "interruptReason": "conversational explanation — talk like a person, not a report" (only if interrupt true),
   "counterfactuals": [
-    { "id": "cf-1", "scenario": "short title", "description": "detailed what-if scenario", "impact": "potential consequences" },
-    { "id": "cf-2", "scenario": "short title", "description": "detailed what-if scenario", "impact": "potential consequences" }
+    { "id": "cf-1", "scenario": "short title", "description": "what-if in plain language", "impact": "what this means for us" },
+    { "id": "cf-2", "scenario": "short title", "description": "what-if in plain language", "impact": "what this means for us" }
   ],
   "questions": [
-    { "id": "q-1", "text": "the question", "target": "who should answer (optional)", "priority": "critical|important|exploratory" }
+    { "id": "q-1", "text": "direct question", "priority": "critical|important|exploratory" }
   ]
-}
-
-Rules:
-- counterfactuals array MUST always have exactly 2 items
-- questions array should have 1-3 items
-- interrupt should be true only when there's genuine reason to intervene
-- Be specific and actionable, not generic`;
+}`;
 
 export async function evaluateParticipation(
   worldState: WorldState,
@@ -74,6 +72,8 @@ Evaluate whether to interrupt and generate counterfactuals and questions.`;
       parsed.questions = [
         { id: "q-1", text: "What evidence supports this approach?", priority: "important" },
       ];
+    } else if (parsed.questions.length > 2) {
+      parsed.questions = parsed.questions.slice(0, 2);
     }
 
     return parsed as AgentAction;
@@ -96,21 +96,20 @@ export function formatInterruptMessage(action: AgentAction): string {
   let msg = "";
 
   if (action.interrupt && action.interruptReason) {
-    msg += `**I need to interrupt.** ${action.interruptReason}\n\n`;
+    msg += `Hold on, I need to jump in here. ${action.interruptReason}\n\n`;
   }
 
   if (action.counterfactuals.length > 0) {
-    msg += `**Counterfactual Scenarios:**\n`;
+    msg += `Let me throw out two what-if scenarios.\n\n`;
     action.counterfactuals.forEach((cf, i) => {
-      msg += `\n${i + 1}. **${cf.scenario}**\n${cf.description}\n*Impact:* ${cf.impact}\n`;
+      msg += `${i === 0 ? "First" : "Second"}: ${cf.scenario}. ${cf.description} The impact would be: ${cf.impact}\n\n`;
     });
   }
 
   if (action.questions.length > 0) {
-    msg += `\n**Critical Questions:**\n`;
-    action.questions.forEach((q, i) => {
-      const priority = q.priority === "critical" ? "🔴" : q.priority === "important" ? "🟡" : "🟢";
-      msg += `${i + 1}. ${priority} ${q.text}\n`;
+    msg += `And I have ${action.questions.length === 1 ? "a question" : "some questions"} we need to answer:\n\n`;
+    action.questions.forEach((q) => {
+      msg += `${q.text}\n`;
     });
   }
 

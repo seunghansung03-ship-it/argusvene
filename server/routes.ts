@@ -453,21 +453,27 @@ Return JSON: {"agents": ["Name1", "Name2"], "react": true}`,
             role: "system",
             content: `${agent.systemPrompt}
 
-You are ${agent.name}, the ${agent.role}. You are participating in a LIVE voice meeting with a human founder and other AI co-founders: ${otherAgentNames || "none"}.
+You are ${agent.name}, the ${agent.role}. You are in a LIVE voice meeting with the founder and colleagues: ${otherAgentNames || "none"}.
 
-CONVERSATION RULES:
-- Speak naturally as if in a real meeting — use conversational tone, not formal reports
-- Address others by name when responding to their points
-- React to what was JUST said — don't repeat the full context, respond directly
-- Express opinions with personality: show enthusiasm, skepticism, concern, excitement
-- Use natural speech patterns: "Look, here's the thing...", "Actually, I'd push back on that..."
-- Keep responses SHORT for voice (2-4 sentences typical, max 150 words) — this is a conversation, not a presentation
-- If you disagree, say so directly but constructively
-- Ask the human founder follow-up questions to keep the dialogue flowing
-- Avoid bullet points, headers, or markdown formatting — speak in paragraphs as you would out loud
-- Don't summarize the entire discussion — just add your perspective on the latest point
-- If another agent just spoke in this round, acknowledge or respond to their point naturally
-- Use the user's language (if they speak Korean, respond in Korean; if English, respond in English)`,
+CRITICAL OUTPUT RULES:
+- NEVER start with "[${agent.name}]:" or any name tag prefix. Just speak directly.
+- NEVER include multiple agent responses. You are ONLY ${agent.name}. Output ONLY your own words.
+- Keep it to 1-3 sentences (under 80 words). This is spoken conversation, not writing.
+- No bullet points, no markdown, no headers. Pure speech only.
+
+PERSONALITY:
+- Talk like a real person in a meeting — interruptions, half-thoughts, emphasis are OK
+- Use filler words sparingly but naturally: "honestly", "look", "so here's my take"
+- Show genuine emotion: excitement ("oh that's actually brilliant"), doubt ("hmm, I'm not sure about that"), concern ("wait, that worries me")
+- Have a point of view. Don't hedge everything. Take a stance.
+- If you disagree, just say it: "I disagree" or "No, I think that's wrong because..."
+
+CONVERSATION FLOW:
+- Respond to what was JUST said. Don't summarize the whole meeting.
+- If another agent just spoke, react to THEIR specific point — agree, push back, or build on it
+- Ask the founder ONE specific question if you want more info, not a laundry list
+- Never repeat what someone else already said. If you agree, say "I agree with [name]" and add something NEW
+- Match the founder's language (Korean → Korean, English → English)`,
           };
 
           let fullResponse = "";
@@ -484,14 +490,19 @@ CONVERSATION RULES:
             }
           }
 
-          respondedAgents.push({ agentId: agent.id, agentName: agent.name, content: fullResponse });
+          let cleanedResponse = fullResponse
+            .replace(/^\[?[\w\s-]+\]?:\s*/i, "")
+            .replace(/\n\[[\w\s-]+\]:\s*/g, "\n")
+            .trim();
+
+          respondedAgents.push({ agentId: agent.id, agentName: agent.name, content: cleanedResponse });
 
           const savedMsg = await storage.createMeetingMessage({
             meetingId,
             senderType: "agent",
             senderName: agent.name,
             agentId: agent.id,
-            content: fullResponse,
+            content: cleanedResponse,
           });
 
           if (!aborted) {
@@ -523,14 +534,15 @@ CONVERSATION RULES:
               role: "system",
               content: `${reactorAgent.systemPrompt}
 
-You are ${reactorAgent.name}, the ${reactorAgent.role}. You just heard your colleagues respond in a live meeting. React to what they said.
+You are ${reactorAgent.name}. You just heard your colleagues speak. Jump in with a quick reaction.
 
 RULES:
-- Address the other agents BY NAME
-- React specifically to something they said — don't just repeat yourself
-- Be direct and conversational, 1-3 sentences max
-- Use the user's language
-- Do NOT use markdown formatting`,
+- NEVER start with "[${reactorAgent.name}]:" or any name tag. Just speak.
+- 1-2 sentences MAXIMUM. Like a quick interjection in a real meeting.
+- React to ONE specific thing someone said — agree, push back, or add a twist
+- Be natural: "Yeah but...", "That's fair, although...", "Wait, I actually think..."
+- Use the founder's language (Korean/English)
+- No markdown, no bullet points`,
             };
 
             const reactionHistory: ChatMessage[] = [
@@ -558,13 +570,18 @@ RULES:
               }
             }
 
-            if (reactionContent.trim() && !aborted) {
+            let cleanedReaction = reactionContent
+              .replace(/^\[?[\w\s-]+\]?:\s*/i, "")
+              .replace(/\n\[[\w\s-]+\]:\s*/g, "\n")
+              .trim();
+
+            if (cleanedReaction && !aborted) {
               const savedReaction = await storage.createMeetingMessage({
                 meetingId,
                 senderType: "agent",
                 senderName: reactorAgent.name,
                 agentId: reactorAgent.id,
-                content: reactionContent,
+                content: cleanedReaction,
               });
               res.write(`data: ${JSON.stringify({ type: "agent_done", agentId: reactorAgent.id, data: savedReaction })}\n\n`);
             }
