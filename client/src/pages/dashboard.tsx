@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Send, Rocket, FlaskConical, TrendingUp, Briefcase,
   MessageSquare, FileText, CheckCircle2, ListTodo, ArrowRight,
-  Sparkles, X,
+  Sparkles, X, CheckCircle, XCircle, Zap, Loader2,
 } from "lucide-react";
 import type { Workspace, Artifact, Decision, Task } from "@shared/schema";
 
@@ -24,11 +24,34 @@ const iconMap: Record<string, typeof Rocket> = {
   briefcase: Briefcase,
 };
 
+type ChatMsg = { role: string; content: string; actions?: { action: string; success: boolean; message: string; data?: any }[] };
+
+function ActionBadge({ result }: { result: { action: string; success: boolean; message: string } }) {
+  const actionLabels: Record<string, string> = {
+    create_workspace: "Workspace Created",
+    list_workspaces: "Workspaces Listed",
+    create_agent: "Agent Created",
+    list_agents: "Agents Listed",
+    create_meeting: "Meeting Created",
+    list_meetings: "Meetings Listed",
+    delete_workspace: "Workspace Deleted",
+    update_agent: "Agent Updated",
+  };
+
+  return (
+    <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs ${result.success ? "bg-emerald-500/15 text-emerald-400" : "bg-red-500/15 text-red-400"}`} data-testid={`badge-action-${result.action}`}>
+      {result.success ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+      <span className="font-medium">{actionLabels[result.action] || result.action}</span>
+    </div>
+  );
+}
+
 function QuickIdeationBar() {
   const [message, setMessage] = useState("");
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [executingActions, setExecutingActions] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -41,27 +64,44 @@ function QuickIdeationBar() {
     setMessage("");
     setIsOpen(true);
 
-    const newMessages = [...messages, { role: "user", content: userMsg }];
+    const newMessages: ChatMsg[] = [...messages, { role: "user", content: userMsg }];
     setMessages(newMessages);
     setStreaming(true);
 
     let assistantContent = "";
+    const pendingActions: any[] = [];
     setMessages(prev => [...prev, { role: "assistant", content: "" }]);
 
     await streamChat(
       "/api/quick-chat",
-      { message: userMsg, history: newMessages.slice(0, -1) },
+      { message: userMsg, history: newMessages.slice(0, -1).map(m => ({ role: m.role, content: m.content })) },
       (data) => {
-        if (data.content) {
+        if (data.content !== undefined) {
           assistantContent += data.content;
           setMessages(prev => {
             const updated = [...prev];
-            updated[updated.length - 1] = { role: "assistant", content: assistantContent };
+            updated[updated.length - 1] = { role: "assistant", content: assistantContent, actions: [...pendingActions] };
             return updated;
           });
         }
+        if (data.action) {
+          pendingActions.push(data.action);
+          setExecutingActions(true);
+          setMessages(prev => {
+            const updated = [...prev];
+            updated[updated.length - 1] = { role: "assistant", content: assistantContent, actions: [...pendingActions] };
+            return updated;
+          });
+          queryClient.invalidateQueries({ queryKey: ["/api/workspaces"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+        }
       },
-      () => setStreaming(false)
+      () => {
+        setStreaming(false);
+        setExecutingActions(false);
+        queryClient.invalidateQueries({ queryKey: ["/api/workspaces"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      }
     );
   };
 
@@ -92,9 +132,17 @@ function QuickIdeationBar() {
       </div>
 
       {isOpen && messages.length > 0 && (
-        <Card className="mt-3 border-card-border max-h-80 flex flex-col">
+        <Card className="mt-3 border-card-border max-h-[400px] flex flex-col">
           <div className="flex items-center justify-between gap-1 px-4 py-2 border-b border-card-border">
-            <span className="text-sm font-medium text-muted-foreground">Quick Chat</span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-muted-foreground">Co-founder Assistant</span>
+              {executingActions && (
+                <Badge variant="outline" className="text-[10px] gap-1 text-amber-400 border-amber-400/30">
+                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                  Executing...
+                </Badge>
+              )}
+            </div>
             <Button
               data-testid="button-close-quickchat"
               size="icon"
@@ -106,9 +154,9 @@ function QuickIdeationBar() {
           </div>
           <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
             {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={i} className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
                 <div
-                  className={`max-w-[80%] rounded-md px-3 py-2 text-sm ${
+                  className={`max-w-[85%] rounded-md px-3 py-2 text-sm whitespace-pre-wrap ${
                     m.role === "user"
                       ? "bg-primary text-primary-foreground"
                       : "bg-muted text-foreground"
@@ -119,6 +167,13 @@ function QuickIdeationBar() {
                     <span className="inline-block w-1.5 h-4 bg-current animate-pulse" />
                   ) : "")}
                 </div>
+                {m.actions && m.actions.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-1.5 max-w-[85%]">
+                    {m.actions.map((a, j) => (
+                      <ActionBadge key={j} result={a} />
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
           </div>

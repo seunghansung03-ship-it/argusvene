@@ -82,6 +82,7 @@ WorldState {
 - `server/ai-participant.ts` - Interrupt + counterfactual engine (Gemini)
 - `server/ai-provider.ts` - Multi-provider AI abstraction
 - `server/elevenlabs.ts` - ElevenLabs TTS with per-agent voice mapping
+- `server/assistant-actions.ts` - Quick chat action execution engine (workspace/agent/meeting CRUD)
 - `server/routes.ts` - All API routes including AI streaming
 - `server/storage.ts` - Database storage layer
 - `shared/schema.ts` - Drizzle schema definitions
@@ -97,7 +98,7 @@ WorldState {
 - `GET /api/workspaces/:wsId/decision-memory` - Workspace-level decision memory
 - `POST /api/tasks/:id/execute` - OpenClaw task execution (SSE)
 - `GET /api/workspaces/:wsId/artifacts|decisions|tasks` - Document hub
-- `POST /api/quick-chat` - Quick ideation chat (SSE)
+- `POST /api/quick-chat` - AI Assistant with action execution (SSE) - can create workspaces, agents, meetings
 - `GET/POST /api/agents` - List/create AI agent personas
 - `PATCH/DELETE /api/agents/:id` - Update/delete agent (delete blocked if in use)
 - `GET/POST /api/providers` - AI provider management

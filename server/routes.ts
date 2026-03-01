@@ -10,6 +10,7 @@ import { evaluateParticipation, formatInterruptMessage } from "./ai-participant"
 import { createEmptyWorldState, type WorldState } from "../shared/types/worldstate";
 import { synthesizeSpeech, isElevenLabsAvailable, getAvailableVoices, fetchElevenLabsVoices } from "./elevenlabs";
 import { insertAgentPersonaSchema } from "@shared/schema";
+import { executeAction, getActionDescriptions, type ActionResult } from "./assistant-actions";
 
 const audioBodyParser = express.json({ limit: "50mb" });
 
@@ -783,22 +784,81 @@ Include WorldState context in your analysis. Be thorough and extract every actio
       const provider = (parsed.data.provider || "gemini") as AIProvider;
       const aiClient = getAIClient(provider);
 
+      const actionDescriptions = getActionDescriptions();
+      const systemPrompt = `You are ArgusVene Co-founder, an AI assistant that helps founders set up and manage their workspace. You can both advise AND take direct actions.
+
+AVAILABLE ACTIONS:
+${actionDescriptions}
+
+WHEN USER ASKS YOU TO DO SOMETHING (create workspace, add agent, start meeting, etc.):
+1. Output a JSON action block on its own line like this:
+<<<ACTION:{"action":"action_name","params":{...}}>>>
+2. Then continue your response naturally after the action.
+3. You can execute MULTIPLE actions in one response — each on its own line.
+
+RULES:
+- When creating agents, write a detailed systemPrompt (2-3 sentences) that defines the agent's personality, expertise, and communication style.
+- For agent colors, use hex codes like #8B5CF6, #06B6D4, #10B981, #F59E0B, #EF4444, #EC4899, #6366F1, #14B8A6, #F97316, #3B82F6
+- When creating a meeting, first check existing agents (list_agents) to know their IDs, then use those IDs.
+- If the user asks to set up a project, create the workspace AND suggest/create relevant agents AND create the first meeting.
+- Always confirm what you did after executing actions.
+- If the user's request is just a question or discussion (no action needed), just respond normally without any ACTION blocks.
+- Respond in the same language the user speaks.`;
+
       const chatMessages: ChatMessage[] = [
-        { role: "system", content: "You are co-founder, an AI Co-founder assistant. You help founders and executives with strategic thinking, technical decisions, and business planning. Be concise, insightful, and actionable. Always challenge assumptions and propose alternatives." },
+        { role: "system", content: systemPrompt },
         ...(parsed.data.history || []).map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
         { role: "user", content: parsed.data.message },
       ];
 
-      for await (const chunk of aiClient.chatStream(chatMessages)) {
-        if (aborted) break;
-        if (chunk.content) {
-          res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+      res.write(`data: ${JSON.stringify({ content: "" })}\n\n`);
+
+      const fullResponse = await aiClient.chat(chatMessages);
+
+      if (aborted) return;
+
+      const actionPattern = /<<<ACTION:(.*?)>>>/g;
+      let match;
+      const actionResults: ActionResult[] = [];
+
+      while ((match = actionPattern.exec(fullResponse)) !== null) {
+        try {
+          const actionData = JSON.parse(match[1]);
+          const result = await executeAction(actionData.action, actionData.params || {});
+          actionResults.push(result);
+          if (!aborted) {
+            res.write(`data: ${JSON.stringify({ action: result })}\n\n`);
+          }
+        } catch (e) {
+          const failResult: ActionResult = { action: "unknown", success: false, message: "Failed to parse action" };
+          actionResults.push(failResult);
+          if (!aborted) res.write(`data: ${JSON.stringify({ action: failResult })}\n\n`);
         }
       }
 
       if (!aborted) {
-        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
-        res.end();
+        if (actionResults.length > 0) {
+          const followUpMessages: ChatMessage[] = [
+            ...chatMessages,
+            { role: "assistant", content: fullResponse },
+            { role: "user", content: `[SYSTEM] Actions executed. Results:\n${actionResults.map(r => `- ${r.action}: ${r.success ? "✅" : "❌"} ${r.message}`).join("\n")}\n\nNow provide a brief, friendly summary to the user about what was done. If actions created resources, mention the names. Respond in the same language the user used. Do NOT output any ACTION blocks.` },
+          ];
+
+          for await (const chunk of aiClient.chatStream(followUpMessages)) {
+            if (aborted) break;
+            if (chunk.content) {
+              res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
+            }
+          }
+        } else {
+          const cleanedResponse = fullResponse.replace(/<<<ACTION:.*?>>>/g, "").trim();
+          res.write(`data: ${JSON.stringify({ content: cleanedResponse })}\n\n`);
+        }
+
+        if (!aborted) {
+          res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+          res.end();
+        }
       }
     } catch (error) {
       console.error("Quick chat error:", error);
