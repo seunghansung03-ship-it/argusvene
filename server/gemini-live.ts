@@ -104,16 +104,20 @@ export async function createLiveSession(userId: string, ws: WebSocket): Promise<
           }
         },
         onerror: (e: any) => {
-          console.error(`[gemini-live] Session error for ${userId}:`, e?.message || e);
+          const detail = e?.message || e?.reason || String(e || "unknown");
+          console.error(`[gemini-live] Session error for ${userId}:`, detail);
           if (ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: "error", message: "Gemini Live session error" }));
+            ws.send(JSON.stringify({ type: "error", message: `Gemini Live error: ${detail}` }));
           }
         },
         onclose: (e: any) => {
-          console.log(`[gemini-live] Session closed for ${userId}`, e?.code, e?.reason);
+          const code = e?.code || 0;
+          const reason = e?.reason || "";
+          console.log(`[gemini-live] Session closed for ${userId}`, code, reason);
           activeSessions.delete(userId);
           if (ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: "session_closed" }));
+            const detail = reason ? ` (${code}: ${reason.substring(0, 200)})` : "";
+            ws.send(JSON.stringify({ type: "session_closed", message: `Session ended${detail}` }));
           }
         },
       },

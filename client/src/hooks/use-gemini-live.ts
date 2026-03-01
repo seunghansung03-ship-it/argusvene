@@ -175,6 +175,9 @@ export function useGeminiLive(options: GeminiLiveOptions) {
             case "session_closed":
               setIsConnected(false);
               updateStatus("disconnected");
+              if (msg.message) {
+                console.warn("[gemini-live]", msg.message);
+              }
               break;
 
             case "error":
@@ -186,8 +189,9 @@ export function useGeminiLive(options: GeminiLiveOptions) {
         }
       };
 
-      ws.onerror = () => {
-        onError?.("WebSocket connection error");
+      ws.onerror = (ev) => {
+        console.error("[gemini-live] WebSocket error event:", ev);
+        onError?.("Gemini Live WebSocket failed — check server logs for details");
         updateStatus("disconnected");
       };
 
