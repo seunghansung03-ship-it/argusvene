@@ -19,12 +19,14 @@ export async function streamChat(
   url: string,
   body: any,
   onChunk: (data: any) => void,
-  onDone?: () => void
+  onDone?: () => void,
+  signal?: AbortSignal
 ) {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(body),
+    signal,
   });
 
   if (!response.ok) throw new Error("Request failed");
@@ -35,21 +37,28 @@ export async function streamChat(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
 
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      try {
-        const parsed = JSON.parse(line.slice(6));
-        onChunk(parsed);
-      } catch {}
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const parsed = JSON.parse(line.slice(6));
+          onChunk(parsed);
+        } catch {}
+      }
     }
+  } catch (err: any) {
+    if (err.name === "AbortError") {
+      return;
+    }
+    throw err;
   }
 
   onDone?.();

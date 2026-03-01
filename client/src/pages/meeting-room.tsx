@@ -80,7 +80,10 @@ function ChatPanel({
   messages,
   streamingMessages,
   agents,
+  agentIds,
   onSend,
+  onSendToAgent,
+  onStopResponse,
   isSending,
   meetingStatus,
   interruptMessage,
@@ -90,11 +93,15 @@ function ChatPanel({
   onToggleLiveMode,
   liveSpeaker,
   interimTranscript,
+  pendingAgentSelect,
 }: {
   messages: MeetingMessage[];
   streamingMessages: StreamingMessage[];
   agents: AgentPersona[];
+  agentIds: number[];
   onSend: (msg: string) => void;
+  onSendToAgent: (agentId: number) => void;
+  onStopResponse: () => void;
   isSending: boolean;
   meetingStatus: string;
   interruptMessage: string | null;
@@ -104,12 +111,14 @@ function ChatPanel({
   onToggleLiveMode: () => void;
   liveSpeaker: string | null;
   interimTranscript: string;
+  pendingAgentSelect: boolean;
 }) {
   const [input, setInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
   const { speak, stop, isSpeaking, elevenLabsAvailable } = useTTS();
+  const activeAgents = agents.filter(a => agentIds.includes(a.id));
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -347,16 +356,67 @@ function ChatPanel({
           </div>
         )}
 
-        {isSending && streamingMessages.length === 0 && (
+        {isSending && streamingMessages.length === 0 && !pendingAgentSelect && (
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
             <span>Agents are thinking...</span>
+          </div>
+        )}
+
+        {pendingAgentSelect && !isSending && (
+          <div className="px-1 py-2" data-testid="agent-select-panel">
+            <p className="text-[11px] text-muted-foreground mb-2">Who should respond?</p>
+            <div className="flex flex-wrap gap-1.5">
+              {activeAgents.length > 0 ? (
+                <>
+                  {activeAgents.map(agent => (
+                    <Button
+                      key={agent.id}
+                      variant="outline"
+                      size="sm"
+                      className="h-7 px-2.5 text-xs gap-1.5"
+                      onClick={() => onSendToAgent(agent.id)}
+                      disabled={isSending}
+                      data-testid={`button-select-agent-${agent.id}`}
+                    >
+                      <AgentAvatar avatar={agent.avatar} color={agent.color} size="xs" name={agent.name} />
+                      {agent.name}
+                    </Button>
+                  ))}
+                </>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2.5 text-xs gap-1.5 border-yellow-500/30 text-yellow-500"
+                onClick={() => onSendToAgent(-1)}
+                disabled={isSending}
+                data-testid="button-select-cofounder"
+              >
+                <Zap className="w-3 h-3" />
+                {activeAgents.length > 0 ? "Auto (AI picks)" : "Send"}
+              </Button>
+            </div>
           </div>
         )}
       </div>
 
       {meetingStatus === "active" && (
         <div className="p-3 border-t border-border">
+          {isSending && (
+            <div className="flex items-center justify-center mb-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-3 text-xs border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                onClick={onStopResponse}
+                data-testid="button-stop-response"
+              >
+                <StopCircle className="w-3 h-3 mr-1.5" />
+                Stop Response
+              </Button>
+            </div>
+          )}
           {!liveMode ? (
             <>
               <div className="flex gap-2">
@@ -382,6 +442,7 @@ function ChatPanel({
                   }}
                   className="resize-none text-sm"
                   rows={2}
+                  disabled={isSending}
                 />
                 <Button
                   data-testid="button-send-message"
@@ -548,12 +609,16 @@ export default function MeetingRoom() {
   const [liveMode, setLiveMode] = useState(false);
   const [liveSpeaker, setLiveSpeaker] = useState<string | null>(null);
   const [interimTranscript, setInterimTranscript] = useState("");
+  const [pendingAgentSelect, setPendingAgentSelect] = useState(false);
+  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
   const ttsQueueRef = useRef<{ text: string; agentName: string }[]>([]);
   const mainTTS = useTTS();
   const liveRecognitionRef = useRef<any>(null);
   const liveModeRef = useRef(false);
   const isSendingRef = useRef(false);
   const ttsDoneCallbackRef = useRef<(() => void) | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const handleSendMessageRef = useRef<(content: string, skipAgentSelect?: boolean) => void>(() => {});
 
   const startLiveSTT = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -603,7 +668,7 @@ export default function MeetingRoom() {
 
             handleSendMessage(text);
           }
-        }, 1200);
+        }, 2500);
       } else if (interim) {
         setInterimTranscript(pendingFinal ? pendingFinal.trim() + " " + interim : interim);
         setLiveSpeaker("You");
@@ -618,7 +683,7 @@ export default function MeetingRoom() {
             try { recognition.stop(); } catch {}
             handleSendMessage(text);
           }
-        }, 1200);
+        }, 2500);
       }
     };
 
@@ -709,12 +774,115 @@ export default function MeetingRoom() {
       .catch(() => {});
   }, [meetingId]);
 
-  const handleSendMessage = useCallback(async (content: string) => {
+  const handleStopResponse = useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsSending(false);
+    isSendingRef.current = false;
+    setStreamingMessages([]);
+    setPendingAgentSelect(false);
+    setPendingUserMessage(null);
+    mainTTS.stop();
+    queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
+  }, [meetingId, mainTTS]);
+
+  const handleSendToAgent = useCallback(async (agentId: number) => {
+    if (isSendingRef.current) return;
+    const content = pendingUserMessage;
+    setPendingAgentSelect(false);
+    setPendingUserMessage(null);
+    if (!content) return;
+
+    if (agentId === -1) {
+      handleSendMessageRef.current(content, true);
+      return;
+    }
+
     setIsSending(true);
     isSendingRef.current = true;
     setStreamingMessages([]);
     setInterruptMessage(null);
     setWorkflowStatus(prev => [...prev, `User message sent`]);
+
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
+
+    await streamChat(
+      `/api/meetings/${meetingId}/messages`,
+      { content, senderName: "You", targetAgentIds: [agentId] },
+      (data) => {
+        switch (data.type) {
+          case "agent_start":
+            setStreamingAgentId(data.agentId);
+            setStreamingMessages(prev => [
+              ...prev,
+              { agentId: data.agentId, agentName: data.agentName, content: "", isComplete: false }
+            ]);
+            break;
+          case "agent_chunk":
+            setStreamingMessages(prev =>
+              prev.map(sm =>
+                sm.agentId === data.agentId
+                  ? { ...sm, content: sm.content + data.content }
+                  : sm
+              )
+            );
+            break;
+          case "agent_done":
+            setStreamingMessages(prev => {
+              const msg = prev.find(sm => sm.agentId === data.agentId);
+              if (msg && (voiceModeRef.current || liveModeRef.current)) {
+                mainTTS.speak(msg.content, msg.agentName);
+              }
+              return prev.map(sm =>
+                sm.agentId === data.agentId ? { ...sm, isComplete: true } : sm
+              );
+            });
+            setStreamingAgentId(null);
+            break;
+          case "worldstate_updated":
+            setIsWorldStateUpdating(false);
+            if (data.worldState) setWorldState(data.worldState);
+            if (data.mermaid) setMermaidSpec(data.mermaid);
+            if (data.comparison) setComparison(data.comparison);
+            break;
+          case "interrupt":
+            if (data.action?.interruptReason) setInterruptMessage(data.action.interruptReason);
+            break;
+          case "counterfactuals":
+            if (data.counterfactuals) setCounterfactuals(data.counterfactuals);
+            break;
+          case "done":
+            setIsSending(false);
+            isSendingRef.current = false;
+            setStreamingMessages([]);
+            abortControllerRef.current = null;
+            queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
+            break;
+        }
+      },
+      () => { setIsSending(false); isSendingRef.current = false; abortControllerRef.current = null; },
+      ac.signal
+    );
+  }, [meetingId, pendingUserMessage, handleSendMessage]);
+
+  const handleSendMessage = useCallback(async (content: string, skipAgentSelect?: boolean) => {
+    if (!skipAgentSelect && !liveModeRef.current) {
+      setPendingUserMessage(content);
+      setPendingAgentSelect(true);
+      return;
+    }
+
+    setIsSending(true);
+    isSendingRef.current = true;
+    setStreamingMessages([]);
+    setInterruptMessage(null);
+    setWorkflowStatus(prev => [...prev, `User message sent`]);
+
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
 
     await streamChat(
       `/api/meetings/${meetingId}/messages`,
@@ -807,9 +975,13 @@ export default function MeetingRoom() {
       () => {
         setIsSending(false);
         isSendingRef.current = false;
-      }
+        abortControllerRef.current = null;
+      },
+      ac.signal
     );
   }, [meetingId, startLiveSTT]);
+
+  handleSendMessageRef.current = handleSendMessage;
 
   const handleEndMeeting = async () => {
     if (liveMode) {
@@ -936,7 +1108,10 @@ export default function MeetingRoom() {
             messages={messages}
             streamingMessages={streamingMessages}
             agents={agents}
+            agentIds={(meeting.agentIds as number[]) || []}
             onSend={handleSendMessage}
+            onSendToAgent={handleSendToAgent}
+            onStopResponse={handleStopResponse}
             isSending={isSending}
             meetingStatus={meeting.status}
             interruptMessage={interruptMessage}
@@ -951,6 +1126,7 @@ export default function MeetingRoom() {
             onToggleLiveMode={toggleLiveMode}
             liveSpeaker={liveSpeaker}
             interimTranscript={interimTranscript}
+            pendingAgentSelect={pendingAgentSelect}
           />
         </div>
 

@@ -20,6 +20,7 @@ const audioBodyParser = express.json({ limit: "50mb" });
 const messageBodySchema = z.object({
   content: z.string().min(1),
   senderName: z.string().optional(),
+  targetAgentIds: z.array(z.number()).optional(),
 });
 
 const statusSchema = z.object({
@@ -312,6 +313,12 @@ export async function registerRoutes(
       let selectedAgents = validAgents;
       let shouldReact = false;
 
+      if (parsed.data.targetAgentIds && parsed.data.targetAgentIds.length > 0) {
+        selectedAgents = validAgents.filter(a => parsed.data.targetAgentIds!.includes(a.id));
+        if (selectedAgents.length === 0) selectedAgents = validAgents.slice(0, 1);
+        shouldReact = false;
+      } else {
+
       const nameAliases: Record<string, string[]> = {
         atlas: ["atlas", "아틀라스", "atlus"],
         nova: ["nova", "노바"],
@@ -421,6 +428,7 @@ Return JSON: {"agents": ["Name1", "Name2"], "react": true}`,
             console.log(`[Router] AI call failed, fallback to first 2`, routerErr);
           }
         }
+      }
       }
 
       const respondedAgents: { agentId: number; agentName: string; content: string }[] = [];
