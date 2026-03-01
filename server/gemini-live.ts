@@ -1,7 +1,7 @@
 import { GoogleGenAI, type Session } from "@google/genai";
 import type { WebSocket } from "ws";
 
-const GEMINI_LIVE_MODEL = "gemini-2.0-flash-live-001";
+const GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-latest";
 
 const SYSTEM_INSTRUCTION = `You are a sharp, experienced AI co-founder in a live voice meeting with a startup founder.
 
