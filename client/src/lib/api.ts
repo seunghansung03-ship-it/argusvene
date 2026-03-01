@@ -1,5 +1,20 @@
 import { apiRequest } from "./queryClient";
 
+let getUserId: (() => string | null) | null = null;
+
+export function setUserIdGetter(fn: () => string | null) {
+  getUserId = fn;
+}
+
+function getAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const uid = getUserId?.();
+  if (uid) {
+    headers["x-user-id"] = uid;
+  }
+  return headers;
+}
+
 export async function streamChat(
   url: string,
   body: any,
@@ -8,7 +23,7 @@ export async function streamChat(
 ) {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(body),
   });
 

@@ -19,6 +19,7 @@ export type User = typeof users.$inferSelect;
 
 export const workspaces = pgTable("workspaces", {
   id: serial("id").primaryKey(),
+  userId: text("user_id"),
   name: text("name").notNull(),
   description: text("description"),
   icon: text("icon").default("briefcase"),

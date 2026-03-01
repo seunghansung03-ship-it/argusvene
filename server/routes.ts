@@ -29,6 +29,17 @@ const quickChatSchema = z.object({
   provider: z.enum(["openai", "gemini"]).optional(),
 });
 
+function getUserId(req: express.Request): string | undefined {
+  return req.headers["x-user-id"] as string | undefined;
+}
+
+async function verifyWorkspaceAccess(workspaceId: number, userId: string | undefined): Promise<boolean> {
+  const ws = await storage.getWorkspace(workspaceId);
+  if (!ws) return false;
+  if (ws.userId && userId && ws.userId !== userId) return false;
+  return true;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -48,9 +59,10 @@ export async function registerRoutes(
     res.json({ default: parsed.data.provider });
   });
 
-  app.get("/api/workspaces", async (_req, res) => {
+  app.get("/api/workspaces", async (req, res) => {
     try {
-      const ws = await storage.getWorkspaces();
+      const userId = req.headers["x-user-id"] as string | undefined;
+      const ws = await storage.getWorkspaces(userId);
       res.json(ws);
     } catch (e) {
       console.error("Error fetching workspaces:", e);
@@ -60,8 +72,10 @@ export async function registerRoutes(
 
   app.get("/api/workspaces/:id", async (req, res) => {
     try {
+      const userId = getUserId(req);
       const ws = await storage.getWorkspace(parseInt(req.params.id));
       if (!ws) return res.status(404).json({ error: "Not found" });
+      if (ws.userId && userId && ws.userId !== userId) return res.status(404).json({ error: "Not found" });
       res.json(ws);
     } catch (e) {
       console.error("Error fetching workspace:", e);
@@ -70,7 +84,8 @@ export async function registerRoutes(
   });
 
   app.post("/api/workspaces", async (req, res) => {
-    const parsed = insertWorkspaceSchema.safeParse(req.body);
+    const userId = getUserId(req);
+    const parsed = insertWorkspaceSchema.safeParse({ ...req.body, userId });
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     try {
       const ws = await storage.createWorkspace(parsed.data);
@@ -83,7 +98,10 @@ export async function registerRoutes(
 
   app.delete("/api/workspaces/:id", async (req, res) => {
     try {
-      await storage.deleteWorkspace(parseInt(req.params.id));
+      const userId = getUserId(req);
+      const wsId = parseInt(req.params.id);
+      if (!(await verifyWorkspaceAccess(wsId, userId))) return res.status(404).json({ error: "Not found" });
+      await storage.deleteWorkspace(wsId);
       res.status(204).send();
     } catch (e) {
       console.error("Error deleting workspace:", e);
@@ -156,7 +174,10 @@ export async function registerRoutes(
 
   app.get("/api/workspaces/:wsId/meetings", async (req, res) => {
     try {
-      const meetings = await storage.getMeetings(parseInt(req.params.wsId));
+      const userId = getUserId(req);
+      const wsId = parseInt(req.params.wsId);
+      if (!(await verifyWorkspaceAccess(wsId, userId))) return res.status(404).json({ error: "Not found" });
+      const meetings = await storage.getMeetings(wsId);
       res.json(meetings);
     } catch (e) {
       console.error("Error fetching meetings:", e);
@@ -185,10 +206,14 @@ export async function registerRoutes(
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
 
     try {
+      const userId = getUserId(req);
+      const wsId = parseInt(req.params.wsId);
+      if (!(await verifyWorkspaceAccess(wsId, userId))) return res.status(404).json({ error: "Not found" });
+
       const sessionId = `session-${Date.now()}`;
       const meeting = await storage.createMeeting({
         ...parsed.data,
-        workspaceId: parseInt(req.params.wsId),
+        workspaceId: wsId,
         status: "active",
         worldState: createEmptyWorldState(sessionId),
       });
@@ -817,7 +842,10 @@ Include WorldState context in your analysis. Be thorough and extract every actio
 
   app.get("/api/workspaces/:wsId/artifacts", async (req, res) => {
     try {
-      const artifacts = await storage.getArtifacts(parseInt(req.params.wsId));
+      const userId = getUserId(req);
+      const wsId = parseInt(req.params.wsId);
+      if (!(await verifyWorkspaceAccess(wsId, userId))) return res.status(404).json({ error: "Not found" });
+      const artifacts = await storage.getArtifacts(wsId);
       res.json(artifacts);
     } catch (e) {
       console.error("Error fetching artifacts:", e);
@@ -838,7 +866,10 @@ Include WorldState context in your analysis. Be thorough and extract every actio
 
   app.get("/api/workspaces/:wsId/decisions", async (req, res) => {
     try {
-      const decisions = await storage.getDecisions(parseInt(req.params.wsId));
+      const userId = getUserId(req);
+      const wsId = parseInt(req.params.wsId);
+      if (!(await verifyWorkspaceAccess(wsId, userId))) return res.status(404).json({ error: "Not found" });
+      const decisions = await storage.getDecisions(wsId);
       res.json(decisions);
     } catch (e) {
       console.error("Error fetching decisions:", e);
@@ -848,7 +879,10 @@ Include WorldState context in your analysis. Be thorough and extract every actio
 
   app.get("/api/workspaces/:wsId/tasks", async (req, res) => {
     try {
-      const tasks = await storage.getTasks(parseInt(req.params.wsId));
+      const userId = getUserId(req);
+      const wsId = parseInt(req.params.wsId);
+      if (!(await verifyWorkspaceAccess(wsId, userId))) return res.status(404).json({ error: "Not found" });
+      const tasks = await storage.getTasks(wsId);
       res.json(tasks);
     } catch (e) {
       console.error("Error fetching tasks:", e);
@@ -914,7 +948,10 @@ Include WorldState context in your analysis. Be thorough and extract every actio
 
   app.get("/api/workspaces/:wsId/decision-memory", async (req, res) => {
     try {
-      const meetings = await storage.getMeetings(parseInt(req.params.wsId));
+      const userId = getUserId(req);
+      const wsId = parseInt(req.params.wsId);
+      if (!(await verifyWorkspaceAccess(wsId, userId))) return res.status(404).json({ error: "Not found" });
+      const meetings = await storage.getMeetings(wsId);
       const memories = [];
 
       for (const meeting of meetings) {
@@ -1039,7 +1076,8 @@ RULES:
       while ((match = actionPattern.exec(fullResponse)) !== null) {
         try {
           const actionData = JSON.parse(match[1]);
-          const result = await executeAction(actionData.action, actionData.params || {});
+          const userId = req.headers["x-user-id"] as string | undefined;
+          const result = await executeAction(actionData.action, actionData.params || {}, userId);
           actionResults.push(result);
           if (!aborted) {
             res.write(`data: ${JSON.stringify({ action: result })}\n\n`);

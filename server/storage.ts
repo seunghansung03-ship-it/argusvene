@@ -16,7 +16,7 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
 
-  getWorkspaces(): Promise<Workspace[]>;
+  getWorkspaces(userId?: string): Promise<Workspace[]>;
   getWorkspace(id: number): Promise<Workspace | undefined>;
   createWorkspace(ws: InsertWorkspace): Promise<Workspace>;
   deleteWorkspace(id: number): Promise<void>;
@@ -65,7 +65,10 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async getWorkspaces() {
+  async getWorkspaces(userId?: string) {
+    if (userId) {
+      return db.select().from(workspaces).where(eq(workspaces.userId, userId)).orderBy(desc(workspaces.createdAt));
+    }
     return db.select().from(workspaces).orderBy(desc(workspaces.createdAt));
   }
   async getWorkspace(id: number) {

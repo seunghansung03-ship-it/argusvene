@@ -51,6 +51,9 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 - `client/src/pages/login.tsx` - Login page with Google sign-in button
 - Protected routes in `App.tsx` via `ProtectedRoutes` component
 - User profile display + sign-out button on dashboard
+- Per-user workspace isolation: `x-user-id` header sent with all API requests, workspaces filtered by `userId`
+- `queryClient.ts` sends `x-user-id` header via `setCurrentUserId`; `api.ts` does the same via `setUserIdGetter`
+- `assistant-actions.ts` `executeAction()` accepts optional `userId` for workspace CRUD
 - **Setup required**: Add Replit dev domain to Firebase Console → Authentication → Authorized Domains
 
 ### Tech Stack
@@ -81,7 +84,7 @@ WorldState {
 ```
 
 ### Database Tables
-- `workspaces` - Organizations/projects
+- `workspaces` - Organizations/projects (with `userId` column for per-user isolation)
 - `agentPersonas` - AI agent configurations (Atlas/Strategy, Nova/Tech, Sage/Finance, Pixel/Design)
 - `meetings` - Meeting rooms with `worldState` JSONB column and `aiProvider` field
 - `meetingMessages` - Chat messages (human + agent + co-founder interrupts)
@@ -91,9 +94,9 @@ WorldState {
 - `users` - User accounts
 
 ### Key Files
-- `client/src/pages/login.tsx` - Google OAuth login page
-- `client/src/hooks/use-auth.tsx` - Firebase auth context/provider
-- `client/src/lib/firebase.ts` - Firebase app config
+- `client/src/pages/login.tsx` - Login page (Google OAuth + Email/Password)
+- `client/src/hooks/use-auth.tsx` - Firebase auth context/provider (Google + Email auth, userId propagation)
+- `client/src/lib/firebase.ts` - Firebase app config (Google + Email auth functions)
 - `client/src/pages/meeting-room.tsx` - 3-panel meeting room (transcript, Live Canvas, agents)
 - `client/src/pages/workspace.tsx` - Workspace with Decision Memory tab
 - `client/src/pages/dashboard.tsx` - Main workspace dashboard with user profile/signout

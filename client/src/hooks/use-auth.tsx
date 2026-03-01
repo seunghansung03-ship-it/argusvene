@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { onAuthChange, loginWithGoogle, loginWithEmail, signUpWithEmail, logout, type User } from "@/lib/firebase";
+import { setCurrentUserId, queryClient } from "@/lib/queryClient";
+import { setUserIdGetter } from "@/lib/api";
 
 interface AuthContextType {
   user: User | null;
@@ -51,9 +53,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    setUserIdGetter(() => user?.uid || null);
+  }, [user]);
+
+  useEffect(() => {
     const unsubscribe = onAuthChange((firebaseUser) => {
       setUser(firebaseUser);
+      setCurrentUserId(firebaseUser?.uid || null);
       setLoading(false);
+      if (firebaseUser) {
+        queryClient.invalidateQueries({ queryKey: ["/api/workspaces"] });
+      }
     });
     return unsubscribe;
   }, []);

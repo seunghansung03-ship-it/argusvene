@@ -55,7 +55,7 @@ export function getActionDescriptions(): string {
   return AVAILABLE_ACTIONS.map(a => `- ${a.name}: ${a.description} (params: ${a.params})`).join("\n");
 }
 
-export async function executeAction(actionName: string, params: Record<string, any>): Promise<ActionResult> {
+export async function executeAction(actionName: string, params: Record<string, any>, userId?: string): Promise<ActionResult> {
   try {
     switch (actionName) {
       case "create_workspace": {
@@ -66,12 +66,13 @@ export async function executeAction(actionName: string, params: Record<string, a
           name: params.name,
           description: params.description,
           icon: params.icon || "briefcase",
+          userId: userId || null,
         } as InsertWorkspace);
         return { action: actionName, success: true, message: `Workspace "${ws.name}" created (ID: ${ws.id})`, data: ws };
       }
 
       case "list_workspaces": {
-        const workspaces = await storage.getWorkspaces();
+        const workspaces = await storage.getWorkspaces(userId);
         return {
           action: actionName,
           success: true,
