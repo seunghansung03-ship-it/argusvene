@@ -1,13 +1,15 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { streamChat } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -16,7 +18,8 @@ import { AgentAvatar } from "@/components/agent-avatar";
 import {
   ArrowLeft, Plus, MessageSquare, FileText, CheckCircle2, ListTodo,
   Clock, Circle, CheckCircle, AlertCircle, Users, Sparkles,
-  Rocket, FlaskConical, TrendingUp, Briefcase,
+  Rocket, FlaskConical, TrendingUp, Briefcase, Play, Loader2,
+  Bot, Zap, Eye, FileCode,
 } from "lucide-react";
 import type { Workspace, Meeting, AgentPersona, Artifact, Decision, Task } from "@shared/schema";
 
@@ -33,6 +36,7 @@ function MeetingsTab({ workspaceId }: { workspaceId: number }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [selectedAgents, setSelectedAgents] = useState<number[]>([]);
+  const [aiProvider, setAiProvider] = useState<string>("");
 
   const { data: meetings, isLoading } = useQuery<Meeting[]>({
     queryKey: ["/api/workspaces", workspaceId, "meetings"],
@@ -43,8 +47,15 @@ function MeetingsTab({ workspaceId }: { workspaceId: number }) {
     queryKey: ["/api/agents"],
   });
 
+  const { data: providerData } = useQuery<{ providers: { id: string; name: string; available: boolean }[]; default: string }>({
+    queryKey: ["/api/providers"],
+  });
+
+  const availableProviders = providerData?.providers.filter(p => p.available) || [];
+  const effectiveProvider = aiProvider || providerData?.default || "openai";
+
   const createMeeting = useMutation({
-    mutationFn: (data: { title: string; agentIds: number[] }) =>
+    mutationFn: (data: { title: string; agentIds: number[]; aiProvider: string }) =>
       apiRequest("POST", `/api/workspaces/${workspaceId}/meetings`, data),
     onSuccess: async (response) => {
       const meeting = await response.json();
@@ -60,6 +71,12 @@ function MeetingsTab({ workspaceId }: { workspaceId: number }) {
     setSelectedAgents(prev =>
       prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]
     );
+  };
+
+  const providerLabel = (id: string) => {
+    if (id === "openai") return "OpenAI GPT-5.2";
+    if (id === "gemini") return "Google Gemini 2.5";
+    return id;
   };
 
   return (
@@ -84,6 +101,30 @@ function MeetingsTab({ workspaceId }: { workspaceId: number }) {
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
               />
+
+              <div>
+                <p className="text-sm font-medium mb-2 text-foreground">AI Provider</p>
+                <Select value={effectiveProvider} onValueChange={setAiProvider}>
+                  <SelectTrigger data-testid="select-ai-provider">
+                    <SelectValue placeholder="Select AI provider" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableProviders.length > 0 ? (
+                      availableProviders.map(p => (
+                        <SelectItem key={p.id} value={p.id} data-testid={`option-provider-${p.id}`}>
+                          {p.name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <>
+                        <SelectItem value="openai">OpenAI GPT-5.2</SelectItem>
+                        <SelectItem value="gemini">Google Gemini 2.5</SelectItem>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div>
                 <p className="text-sm font-medium mb-3 text-foreground">Select AI Agents</p>
                 <div className="space-y-2">
@@ -109,7 +150,7 @@ function MeetingsTab({ workspaceId }: { workspaceId: number }) {
               <Button
                 data-testid="button-start-meeting"
                 className="w-full"
-                onClick={() => createMeeting.mutate({ title, agentIds: selectedAgents })}
+                onClick={() => createMeeting.mutate({ title, agentIds: selectedAgents, aiProvider: effectiveProvider })}
                 disabled={!title.trim() || selectedAgents.length === 0 || createMeeting.isPending}
               >
                 {createMeeting.isPending ? "Starting..." : "Start Meeting"}
@@ -137,9 +178,14 @@ function MeetingsTab({ workspaceId }: { workspaceId: number }) {
                   <MessageSquare className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                   <div className="min-w-0">
                     <p className="font-medium text-foreground truncate">{m.title}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {new Date(m.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                    </p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(m.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      </span>
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                        {providerLabel(m.aiProvider)}
+                      </Badge>
+                    </div>
                   </div>
                 </div>
                 <Badge variant={m.status === "active" ? "default" : "secondary"}>
@@ -166,13 +212,6 @@ function ArtifactsTab({ workspaceId }: { workspaceId: number }) {
     queryKey: ["/api/workspaces", workspaceId, "artifacts"],
     queryFn: () => fetch(`/api/workspaces/${workspaceId}/artifacts`).then(r => r.json()),
   });
-
-  const typeColors: Record<string, string> = {
-    architecture_doc: "bg-purple-500/10 text-purple-500",
-    prd: "bg-blue-500/10 text-blue-500",
-    technical_spec: "bg-cyan-500/10 text-cyan-500",
-    meeting_notes: "bg-green-500/10 text-green-500",
-  };
 
   if (isLoading) return <div className="space-y-3">{[1, 2].map(i => <Skeleton key={i} className="h-20 rounded-md" />)}</div>;
 
@@ -264,6 +303,10 @@ function DecisionsTab({ workspaceId }: { workspaceId: number }) {
 }
 
 function TasksTab({ workspaceId }: { workspaceId: number }) {
+  const { toast } = useToast();
+  const [executingId, setExecutingId] = useState<number | null>(null);
+  const [executionResult, setExecutionResult] = useState<{ taskId: number; result: string } | null>(null);
+
   const { data: tasks, isLoading } = useQuery<Task[]>({
     queryKey: ["/api/workspaces", workspaceId, "tasks"],
     queryFn: () => fetch(`/api/workspaces/${workspaceId}/tasks`).then(r => r.json()),
@@ -275,6 +318,29 @@ function TasksTab({ workspaceId }: { workspaceId: number }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/workspaces", workspaceId, "tasks"] }),
   });
 
+  const handleExecuteTask = useCallback(async (taskId: number) => {
+    setExecutingId(taskId);
+    let result = "";
+
+    await streamChat(
+      `/api/tasks/${taskId}/execute`,
+      {},
+      (data) => {
+        if (data.type === "chunk" && data.content) {
+          result += data.content;
+          setExecutionResult({ taskId, result });
+        }
+        if (data.type === "complete") {
+          queryClient.invalidateQueries({ queryKey: ["/api/workspaces", workspaceId, "tasks"] });
+          toast({ title: "Task executed", description: "OpenClaw has completed the task." });
+        }
+      },
+      () => {
+        setExecutingId(null);
+      }
+    );
+  }, [workspaceId, toast]);
+
   const statusIcon = (status: string) => {
     switch (status) {
       case "completed": return <CheckCircle className="w-4 h-4 text-green-500" />;
@@ -283,45 +349,132 @@ function TasksTab({ workspaceId }: { workspaceId: number }) {
     }
   };
 
+  const executionTypeBadge = (type: string | null) => {
+    if (!type || type === "manual") return null;
+    if (type === "ai_draft") return (
+      <Badge variant="outline" className="text-[10px] px-1.5 py-0 gap-1">
+        <FileCode className="w-2.5 h-2.5" />
+        AI Draft
+      </Badge>
+    );
+    if (type === "ai_research") return (
+      <Badge variant="outline" className="text-[10px] px-1.5 py-0 gap-1">
+        <Bot className="w-2.5 h-2.5" />
+        AI Research
+      </Badge>
+    );
+    return null;
+  };
+
   if (isLoading) return <div className="space-y-3">{[1, 2].map(i => <Skeleton key={i} className="h-16 rounded-md" />)}</div>;
 
-  return tasks && tasks.length > 0 ? (
-    <div className="space-y-3">
-      {tasks.map(t => (
-        <Card key={t.id} className="p-4 border-card-border" data-testid={`card-task-${t.id}`}>
-          <div className="flex items-start gap-3">
+  return (
+    <div>
+      {executionResult && (
+        <Card className="p-4 border-card-border mb-4">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-primary" />
+              <span className="text-sm font-semibold text-foreground">OpenClaw Execution Result</span>
+            </div>
             <Button
               variant="ghost"
-              size="icon"
-              className="mt-0.5 flex-shrink-0"
-              onClick={() => updateStatus.mutate({
-                id: t.id,
-                status: t.status === "completed" ? "pending" : "completed"
-              })}
-              data-testid={`button-toggle-task-${t.id}`}
+              size="sm"
+              onClick={() => setExecutionResult(null)}
+              data-testid="button-close-execution"
             >
-              {statusIcon(t.status)}
+              Close
             </Button>
-            <div className="min-w-0 flex-1">
-              <p className={`font-medium ${t.status === "completed" ? "line-through text-muted-foreground" : "text-foreground"}`}>
-                {t.title}
-              </p>
-              {t.description && <p className="text-sm text-muted-foreground mt-1">{t.description}</p>}
-              {t.assignee && (
-                <span className="text-xs text-muted-foreground mt-1 inline-block">
-                  Assigned to: {t.assignee}
-                </span>
-              )}
-            </div>
+          </div>
+          <div className="prose prose-sm dark:prose-invert max-w-none max-h-64 overflow-y-auto" data-testid="text-execution-result">
+            {executionResult.result.split("\n").map((line, i) => (
+              <p key={i}>{line}</p>
+            ))}
+            {executingId === executionResult.taskId && (
+              <span className="inline-block w-1.5 h-4 bg-primary animate-pulse" />
+            )}
           </div>
         </Card>
-      ))}
+      )}
+
+      {tasks && tasks.length > 0 ? (
+        <div className="space-y-3">
+          {tasks.map(t => (
+            <Card key={t.id} className="p-4 border-card-border" data-testid={`card-task-${t.id}`}>
+              <div className="flex items-start gap-3">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="mt-0.5 flex-shrink-0"
+                  onClick={() => updateStatus.mutate({
+                    id: t.id,
+                    status: t.status === "completed" ? "pending" : "completed"
+                  })}
+                  data-testid={`button-toggle-task-${t.id}`}
+                >
+                  {statusIcon(t.status)}
+                </Button>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className={`font-medium ${t.status === "completed" ? "line-through text-muted-foreground" : "text-foreground"}`}>
+                      {t.title}
+                    </p>
+                    {executionTypeBadge(t.executionType)}
+                  </div>
+                  {t.description && <p className="text-sm text-muted-foreground mt-1">{t.description}</p>}
+                  <div className="flex items-center gap-3 mt-1 flex-wrap">
+                    {t.assignee && (
+                      <span className="text-xs text-muted-foreground">
+                        Assigned to: {t.assignee}
+                      </span>
+                    )}
+                    {t.executionResult && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs h-6 px-2"
+                        onClick={() => setExecutionResult({ taskId: t.id, result: t.executionResult! })}
+                        data-testid={`button-view-result-${t.id}`}
+                      >
+                        <Eye className="w-3 h-3 mr-1" />
+                        View Result
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {t.executionType && t.executionType !== "manual" && t.status !== "completed" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-shrink-0"
+                    onClick={() => handleExecuteTask(t.id)}
+                    disabled={executingId !== null}
+                    data-testid={`button-execute-task-${t.id}`}
+                  >
+                    {executingId === t.id ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                        Running...
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3.5 h-3.5 mr-1.5" />
+                        Execute
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <Card className="p-8 text-center border-card-border">
+          <ListTodo className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+          <p className="text-muted-foreground">No tasks yet.</p>
+        </Card>
+      )}
     </div>
-  ) : (
-    <Card className="p-8 text-center border-card-border">
-      <ListTodo className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
-      <p className="text-muted-foreground">No tasks yet.</p>
-    </Card>
   );
 }
 

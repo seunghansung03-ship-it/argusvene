@@ -3,12 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertWorkspaceSchema, insertMeetingSchema } from "@shared/schema";
 import { z } from "zod";
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { getAIClient, getAvailableProviders, getDefaultProvider, setDefaultProvider, type AIProvider, type ChatMessage } from "./ai-provider";
 
 const messageBodySchema = z.object({
   content: z.string().min(1),
@@ -22,12 +17,27 @@ const statusSchema = z.object({
 const quickChatSchema = z.object({
   message: z.string().min(1),
   history: z.array(z.object({ role: z.string(), content: z.string() })).optional(),
+  provider: z.enum(["openai", "gemini"]).optional(),
 });
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+
+  app.get("/api/providers", (_req, res) => {
+    res.json({
+      providers: getAvailableProviders(),
+      default: getDefaultProvider(),
+    });
+  });
+
+  app.post("/api/providers/default", (req, res) => {
+    const parsed = z.object({ provider: z.enum(["openai", "gemini"]) }).safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    setDefaultProvider(parsed.data.provider);
+    res.json({ default: parsed.data.provider });
+  });
 
   app.get("/api/workspaces", async (_req, res) => {
     try {
@@ -107,6 +117,7 @@ export async function registerRoutes(
     const bodySchema = z.object({
       title: z.string().min(1),
       agentIds: z.array(z.number()).default([]),
+      aiProvider: z.enum(["openai", "gemini"]).default("openai"),
     });
     const parsed = bodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
@@ -179,6 +190,9 @@ export async function registerRoutes(
         return;
       }
 
+      const provider = (meeting.aiProvider || "openai") as AIProvider;
+      const aiClient = getAIClient(provider);
+
       const agentIds = (meeting.agentIds as number[]) || [];
       const agents = await Promise.all(agentIds.map(id => storage.getAgentPersona(id)));
       const validAgents = agents.filter(Boolean) as NonNullable<typeof agents[0]>[];
@@ -189,20 +203,15 @@ export async function registerRoutes(
         if (aborted) break;
 
         try {
-          const chatHistory = previousMessages.map(m => ({
+          const chatHistory: ChatMessage[] = previousMessages.map(m => ({
             role: (m.senderType === "human" ? "user" : "assistant") as "user" | "assistant",
             content: m.senderType === "human" ? m.content : `[${m.senderName}]: ${m.content}`,
           }));
 
-          const stream = await openai.chat.completions.create({
-            model: "gpt-5.2",
-            messages: [
-              { role: "system", content: `${agent.systemPrompt}\n\nYou are ${agent.name}, the ${agent.role}. Respond concisely and in-character. Keep responses focused and under 300 words unless a detailed analysis is required.` },
-              ...chatHistory,
-            ],
-            stream: true,
-            max_completion_tokens: 8192,
-          });
+          const systemMsg: ChatMessage = {
+            role: "system",
+            content: `${agent.systemPrompt}\n\nYou are ${agent.name}, the ${agent.role}. Respond concisely and in-character. Keep responses focused and under 300 words unless a detailed analysis is required.`,
+          };
 
           let fullResponse = "";
 
@@ -210,12 +219,11 @@ export async function registerRoutes(
             res.write(`data: ${JSON.stringify({ type: "agent_start", agentId: agent.id, agentName: agent.name })}\n\n`);
           }
 
-          for await (const chunk of stream) {
+          for await (const chunk of aiClient.chatStream([systemMsg, ...chatHistory])) {
             if (aborted) break;
-            const text = chunk.choices[0]?.delta?.content || "";
-            if (text) {
-              fullResponse += text;
-              res.write(`data: ${JSON.stringify({ type: "agent_chunk", agentId: agent.id, content: text })}\n\n`);
+            if (chunk.content) {
+              fullResponse += chunk.content;
+              res.write(`data: ${JSON.stringify({ type: "agent_chunk", agentId: agent.id, content: chunk.content })}\n\n`);
             }
           }
 
@@ -265,33 +273,35 @@ export async function registerRoutes(
       const messages = await storage.getMeetingMessages(meetingId);
       if (messages.length === 0) return res.status(400).json({ error: "No messages to summarize" });
 
+      const provider = (meeting.aiProvider || "openai") as AIProvider;
+      const aiClient = getAIClient(provider);
+
       const transcript = messages.map(m => `[${m.senderName}]: ${m.content}`).join("\n\n");
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-5.2",
-        messages: [
-          {
-            role: "system",
-            content: `You are the Consensus Engine for ArgusVene. Analyze the meeting transcript and produce a structured JSON output with:
+      const resultText = await aiClient.chatJSON([
+        {
+          role: "system",
+          content: `You are the Consensus Engine for ArgusVene. Analyze the meeting transcript and produce a structured JSON output with:
 1. "artifacts" - Array of generated documents. Each has: "type" (one of: "architecture_doc", "prd", "technical_spec", "meeting_notes"), "title", "content" (detailed markdown).
 2. "decisions" - Array of decisions made. Each has: "title", "description".
-3. "tasks" - Array of action items. Each has: "title", "description", "assignee" (agent name or "Unassigned").
+3. "tasks" - Array of action items. Each has: "title", "description", "assignee" (agent name or "Unassigned"), "executionType" (one of: "manual", "ai_draft", "ai_research").
+
+For executionType:
+- "manual" = requires human action
+- "ai_draft" = AI can generate a draft document/code/plan for this
+- "ai_research" = AI can research and compile information for this
 
 Be thorough and extract every actionable item. Output ONLY valid JSON.`
-          },
-          { role: "user", content: `Meeting: "${meeting.title}"\n\nTranscript:\n${transcript}` }
-        ],
-        max_completion_tokens: 8192,
-        response_format: { type: "json_object" },
-      });
+        },
+        { role: "user", content: `Meeting: "${meeting.title}"\n\nTranscript:\n${transcript}` }
+      ]);
 
       if (aborted) return;
 
-      const resultText = response.choices[0]?.message?.content || "{}";
       let parsed: any;
       try {
         parsed = JSON.parse(resultText);
@@ -331,6 +341,7 @@ Be thorough and extract every actionable item. Output ONLY valid JSON.`
           description: t.description || "",
           assignee: t.assignee || "Unassigned",
           status: "pending",
+          executionType: t.executionType || "manual",
         });
         savedTasks.push(saved);
       }
@@ -348,6 +359,66 @@ Be thorough and extract every actionable item. Output ONLY valid JSON.`
         res.status(500).json({ error: "Failed to summarize" });
       } else if (!aborted) {
         res.write(`data: ${JSON.stringify({ type: "error", error: "Failed to summarize" })}\n\n`);
+        res.end();
+      }
+    }
+  });
+
+  app.post("/api/tasks/:id/execute", async (req, res) => {
+    const taskId = parseInt(req.params.id);
+    let aborted = false;
+    res.on("close", () => { aborted = true; });
+
+    try {
+      const task = await storage.getTask(taskId);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+
+      if (task.executionType === "manual") {
+        return res.status(400).json({ error: "Manual tasks cannot be executed by AI" });
+      }
+
+      const providerParam = req.body?.provider as AIProvider | undefined;
+      const aiClient = getAIClient(providerParam);
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      res.write(`data: ${JSON.stringify({ type: "start", taskId: task.id, executionType: task.executionType })}\n\n`);
+
+      let systemPrompt = "";
+      if (task.executionType === "ai_draft") {
+        systemPrompt = `You are OpenClaw, the autonomous execution runtime for ArgusVene. Your job is to produce a complete, high-quality draft based on the task description. Output detailed, actionable content in markdown format. Include specifics like code snippets, architecture diagrams in mermaid, timelines, or whatever is appropriate for the task.`;
+      } else if (task.executionType === "ai_research") {
+        systemPrompt = `You are OpenClaw, the autonomous execution runtime for ArgusVene. Your job is to research and compile comprehensive information based on the task description. Provide structured research findings, comparisons, recommendations, and citations where relevant. Output in markdown format.`;
+      }
+
+      let fullResult = "";
+
+      for await (const chunk of aiClient.chatStream([
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Task: ${task.title}\n\nDescription: ${task.description || "No additional details provided."}\n\nAssigned to: ${task.assignee || "Unassigned"}\n\nPlease produce a comprehensive output for this task.` },
+      ])) {
+        if (aborted) break;
+        if (chunk.content) {
+          fullResult += chunk.content;
+          res.write(`data: ${JSON.stringify({ type: "chunk", content: chunk.content })}\n\n`);
+        }
+      }
+
+      const updated = await storage.updateTaskExecution(taskId, fullResult, "completed");
+
+      if (!aborted) {
+        res.write(`data: ${JSON.stringify({ type: "complete", task: updated })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+        res.end();
+      }
+    } catch (error) {
+      console.error("Task execution error:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to execute task" });
+      } else if (!aborted) {
+        res.write(`data: ${JSON.stringify({ type: "error", error: "Execution failed" })}\n\n`);
         res.end();
       }
     }
@@ -419,24 +490,19 @@ Be thorough and extract every actionable item. Output ONLY valid JSON.`
     res.setHeader("Connection", "keep-alive");
 
     try {
-      const chatMessages = [
-        { role: "system" as const, content: "You are ArgusVene, an AI Co-founder assistant. You help founders and executives with strategic thinking, technical decisions, and business planning. Be concise, insightful, and actionable." },
+      const provider = parsed.data.provider as AIProvider | undefined;
+      const aiClient = getAIClient(provider);
+
+      const chatMessages: ChatMessage[] = [
+        { role: "system", content: "You are ArgusVene, an AI Co-founder assistant. You help founders and executives with strategic thinking, technical decisions, and business planning. Be concise, insightful, and actionable." },
         ...(parsed.data.history || []).map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-        { role: "user" as const, content: parsed.data.message },
+        { role: "user", content: parsed.data.message },
       ];
 
-      const stream = await openai.chat.completions.create({
-        model: "gpt-5.2",
-        messages: chatMessages,
-        stream: true,
-        max_completion_tokens: 8192,
-      });
-
-      for await (const chunk of stream) {
+      for await (const chunk of aiClient.chatStream(chatMessages)) {
         if (aborted) break;
-        const text = chunk.choices[0]?.delta?.content || "";
-        if (text) {
-          res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
+        if (chunk.content) {
+          res.write(`data: ${JSON.stringify({ content: chunk.content })}\n\n`);
         }
       }
 

@@ -55,6 +55,7 @@ export const meetings = pgTable("meetings", {
   title: text("title").notNull(),
   status: text("status").default("active").notNull(),
   agentIds: jsonb("agent_ids").$type<number[]>().default([]),
+  aiProvider: text("ai_provider").default("openai").notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   endedAt: timestamp("ended_at"),
 });
@@ -130,6 +131,8 @@ export const tasks = pgTable("tasks", {
   description: text("description"),
   status: text("status").default("pending").notNull(),
   assignee: text("assignee"),
+  executionType: text("execution_type").default("manual"),
+  executionResult: text("execution_result"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   completedAt: timestamp("completed_at"),
 });

@@ -41,8 +41,10 @@ export interface IStorage {
   createDecision(decision: InsertDecision): Promise<Decision>;
 
   getTasks(workspaceId: number): Promise<Task[]>;
+  getTask(id: number): Promise<Task | undefined>;
   createTask(task: InsertTask): Promise<Task>;
   updateTaskStatus(id: number, status: string): Promise<Task | undefined>;
+  updateTaskExecution(id: number, result: string, status: string): Promise<Task | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -133,12 +135,20 @@ export class DatabaseStorage implements IStorage {
   async getTasks(workspaceId: number) {
     return db.select().from(tasks).where(eq(tasks.workspaceId, workspaceId)).orderBy(desc(tasks.createdAt));
   }
+  async getTask(id: number) {
+    const [t] = await db.select().from(tasks).where(eq(tasks.id, id));
+    return t;
+  }
   async createTask(task: InsertTask) {
     const [created] = await db.insert(tasks).values(task).returning();
     return created;
   }
   async updateTaskStatus(id: number, status: string) {
     const [updated] = await db.update(tasks).set({ status, completedAt: status === "completed" ? new Date() : undefined }).where(eq(tasks.id, id)).returning();
+    return updated;
+  }
+  async updateTaskExecution(id: number, result: string, status: string) {
+    const [updated] = await db.update(tasks).set({ executionResult: result, status, completedAt: new Date() }).where(eq(tasks.id, id)).returning();
     return updated;
   }
 }

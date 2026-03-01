@@ -559,9 +559,14 @@ export default function MeetingRoom() {
             <h1 className="text-sm font-semibold text-foreground truncate" data-testid="text-meeting-title">
               {meeting.title}
             </h1>
-            <p className="text-xs text-muted-foreground">
-              {meeting.status === "active" ? "In Progress" : "Ended"} - {agentIds.length} agent{agentIds.length !== 1 ? "s" : ""}
-            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-xs text-muted-foreground">
+                {meeting.status === "active" ? "In Progress" : "Ended"} - {agentIds.length} agent{agentIds.length !== 1 ? "s" : ""}
+              </p>
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0" data-testid="badge-ai-provider">
+                {meeting.aiProvider === "gemini" ? "Gemini" : "OpenAI"}
+              </Badge>
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
