@@ -4,14 +4,14 @@ const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const BASE_URL = "https://api.elevenlabs.io/v1";
 
 const DEFAULT_VOICE_MAP: Record<string, string> = {
-  "Atlas": "onwK4e9ZLuTAKqWW03F9",
-  "Nova": "Xb7hH8MSUJpSbSDYk0k2",
+  "Atlas": "CwhRBWXzGAHq8TQ4Fs17",
+  "Nova": "EXAVITQu4vr4xnSDxMaL",
   "Sage": "cjVigY5qzO86Huf0OWal",
-  "Pixel": "cgSgspJ2msm6clMCkdW9",
+  "Pixel": "iP95p4xoKVk53GoZ742B",
   "co-founder": "JBFqnCBsd6RMkjVDRZzb",
 };
 
-const DEFAULT_VOICE = "nPczCjzI2devNBz1zQrb";
+const DEFAULT_VOICE = "JBFqnCBsd6RMkjVDRZzb";
 
 export async function getVoiceIdForAgent(agentName: string): Promise<string> {
   const agents = await storage.getAgentPersonas();
@@ -80,9 +80,9 @@ export async function synthesizeSpeech(
         text: truncated,
         model_id: "eleven_multilingual_v2",
         voice_settings: {
-          stability: 0.5,
-          similarity_boost: 0.75,
-          style: 0.0,
+          stability: 0.4,
+          similarity_boost: 0.65,
+          style: 0.15,
           use_speaker_boost: true,
         },
       }),
