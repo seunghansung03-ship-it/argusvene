@@ -740,7 +740,7 @@ export default function MeetingRoom() {
             setStreamingMessages(prev => {
               const msg = prev.find(sm => sm.agentId === data.agentId);
               if (msg && (voiceModeRef.current || liveModeRef.current)) {
-                ttsQueueRef.current.push({ text: msg.content, agentName: msg.agentName });
+                mainTTS.speak(msg.content, msg.agentName);
               }
               if (msg && liveModeRef.current) {
                 setLiveSpeaker(msg.agentName);
@@ -786,13 +786,6 @@ export default function MeetingRoom() {
             setStreamingMessages([]);
             queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
 
-            const hasQueuedTTS = ttsQueueRef.current.length > 0;
-            if ((voiceModeRef.current || liveModeRef.current) && hasQueuedTTS) {
-              const items = [...ttsQueueRef.current];
-              ttsQueueRef.current = [];
-              items.forEach(item => mainTTS.speak(item.text, item.agentName));
-            }
-
             if (liveModeRef.current) {
               const resumeSTT = () => {
                 setLiveSpeaker(null);
@@ -800,7 +793,7 @@ export default function MeetingRoom() {
                   if (liveModeRef.current) startLiveSTT();
                 }, 500);
               };
-              if (hasQueuedTTS || mainTTS.isSpeaking) {
+              if (mainTTS.isSpeaking) {
                 mainTTS.setOnQueueDone(resumeSTT);
               } else {
                 resumeSTT();

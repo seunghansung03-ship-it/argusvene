@@ -340,10 +340,78 @@ CONVERSATION RULES:
         }
       }
 
+      const firstRoundResponses: { agentId: number; agentName: string; content: string }[] = [];
+      const latestMessages = await storage.getMeetingMessages(meetingId);
+
+      for (const agent of validAgents) {
+        const lastMsg = latestMessages.find(m => m.agentId === agent.id && m.senderType === "agent");
+        if (lastMsg) firstRoundResponses.push({ agentId: agent.id, agentName: agent.name, content: lastMsg.content });
+      }
+
+      if (!aborted && validAgents.length >= 2 && firstRoundResponses.length >= 2) {
+        const reactor = validAgents[Math.floor(Math.random() * validAgents.length)];
+        const othersContext = firstRoundResponses
+          .filter(r => r.agentId !== reactor.id)
+          .map(r => `[${r.agentName}]: ${r.content}`)
+          .join("\n\n");
+
+        try {
+          const reactionSystemMsg: ChatMessage = {
+            role: "system",
+            content: `${reactor.systemPrompt}
+
+You are ${reactor.name}, the ${reactor.role}. You just heard your colleagues respond in a live meeting. Now it's your turn to REACT to what they said — agree, disagree, build on their ideas, or challenge them.
+
+RULES:
+- Address the other agents BY NAME: "${firstRoundResponses.filter(r => r.agentId !== reactor.id).map(r => r.agentName).join(", ")}"
+- React specifically to something they said — don't just repeat yourself
+- Be direct and conversational, 1-3 sentences max
+- Show your personality: "I actually disagree with Nova here because..." or "Great point from Atlas — and I'd add..."
+- Use the user's language (Korean if they speak Korean, English if English)
+- Do NOT use markdown formatting`,
+          };
+
+          const reactionHistory: ChatMessage[] = [
+            ...latestMessages.slice(-8).map(m => ({
+              role: (m.senderType === "human" ? "user" : "assistant") as "user" | "assistant",
+              content: m.senderType === "human" ? m.content : `[${m.senderName}]: ${m.content}`,
+            })),
+            { role: "user", content: `[System]: Now react to what the other agents just said:\n\n${othersContext}` },
+          ];
+
+          let reactionContent = "";
+          if (!aborted) {
+            res.write(`data: ${JSON.stringify({ type: "agent_start", agentId: reactor.id, agentName: reactor.name })}\n\n`);
+          }
+
+          for await (const chunk of aiClient.chatStream([reactionSystemMsg, ...reactionHistory])) {
+            if (aborted) break;
+            if (chunk.content) {
+              reactionContent += chunk.content;
+              res.write(`data: ${JSON.stringify({ type: "agent_chunk", agentId: reactor.id, content: chunk.content })}\n\n`);
+            }
+          }
+
+          if (reactionContent.trim() && !aborted) {
+            const savedReaction = await storage.createMeetingMessage({
+              meetingId,
+              senderType: "agent",
+              senderName: reactor.name,
+              agentId: reactor.id,
+              content: reactionContent,
+            });
+            res.write(`data: ${JSON.stringify({ type: "agent_done", agentId: reactor.id, data: savedReaction })}\n\n`);
+          }
+        } catch (error) {
+          console.error(`Reaction round error for ${reactor.name}:`, error);
+        }
+      }
+
       if (!aborted) {
         try {
           const currentWorldState = (meeting.worldState as WorldState) || createEmptyWorldState(`session-${meetingId}`);
-          const transcript = previousMessages.slice(-6).map(m => `[${m.senderName}]: ${m.content}`).join("\n");
+          const allMsgs = await storage.getMeetingMessages(meetingId);
+          const transcript = allMsgs.slice(-8).map(m => `[${m.senderName}]: ${m.content}`).join("\n");
 
           res.write(`data: ${JSON.stringify({ type: "worldstate_updating" })}\n\n`);
 
