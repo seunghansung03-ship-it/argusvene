@@ -118,5 +118,19 @@ export function useTTS() {
     setIsSpeaking(false);
   }, []);
 
-  return { speak, stop, isSpeaking, elevenLabsAvailable };
+  const onDoneRef = useRef<(() => void) | null>(null);
+
+  const setOnQueueDone = useCallback((cb: (() => void) | null) => {
+    onDoneRef.current = cb;
+  }, []);
+
+  useEffect(() => {
+    if (!isSpeaking && onDoneRef.current) {
+      const cb = onDoneRef.current;
+      onDoneRef.current = null;
+      cb();
+    }
+  }, [isSpeaking]);
+
+  return { speak, stop, isSpeaking, elevenLabsAvailable, setOnQueueDone };
 }

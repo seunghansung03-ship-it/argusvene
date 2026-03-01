@@ -48,6 +48,33 @@ interface Counterfactual {
   impact: string;
 }
 
+function VoiceWaveform({ active, color = "bg-primary" }: { active: boolean; color?: string }) {
+  return (
+    <div className="flex items-center gap-[3px] h-4">
+      {[1, 2, 3, 4, 5].map((i) => (
+        <div
+          key={i}
+          className={`w-[3px] rounded-full transition-all ${color} ${active ? "animate-pulse" : "opacity-30"}`}
+          style={{
+            height: active ? `${8 + Math.random() * 10}px` : "4px",
+            animationDelay: `${i * 0.1}s`,
+            animationDuration: active ? `${0.4 + Math.random() * 0.3}s` : "0s",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function LiveBadge() {
+  return (
+    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-500/15 border border-red-500/30" data-testid="badge-live-mode">
+      <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+      <span className="text-[11px] font-bold text-red-400 tracking-wider">LIVE</span>
+    </div>
+  );
+}
+
 function ChatPanel({
   messages,
   streamingMessages,
@@ -58,6 +85,10 @@ function ChatPanel({
   interruptMessage,
   voiceMode,
   onToggleVoiceMode,
+  liveMode,
+  onToggleLiveMode,
+  liveSpeaker,
+  interimTranscript,
 }: {
   messages: MeetingMessage[];
   streamingMessages: StreamingMessage[];
@@ -68,6 +99,10 @@ function ChatPanel({
   interruptMessage: string | null;
   voiceMode: boolean;
   onToggleVoiceMode: () => void;
+  liveMode: boolean;
+  onToggleLiveMode: () => void;
+  liveSpeaker: string | null;
+  interimTranscript: string;
 }) {
   const [input, setInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
@@ -79,7 +114,7 @@ function ChatPanel({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, streamingMessages]);
+  }, [messages, streamingMessages, interimTranscript]);
 
   const handleSend = () => {
     if (!input.trim() || isSending) return;
@@ -135,23 +170,60 @@ function ChatPanel({
               <VolumeX className="w-3.5 h-3.5 text-red-400" />
             </Button>
           )}
-          <Button
-            variant={voiceMode ? "default" : "ghost"}
-            size="sm"
-            className="h-6 px-2 text-[10px]"
-            onClick={onToggleVoiceMode}
-            data-testid="button-toggle-voice-mode"
-          >
-            <Volume2 className="w-3 h-3 mr-1" />
-            {voiceMode ? "Voice On" : "Voice Off"}
-          </Button>
-          {voiceMode && elevenLabsAvailable && (
+          {!liveMode && (
+            <Button
+              variant={voiceMode ? "default" : "ghost"}
+              size="sm"
+              className="h-6 px-2 text-[10px]"
+              onClick={onToggleVoiceMode}
+              data-testid="button-toggle-voice-mode"
+            >
+              <Volume2 className="w-3 h-3 mr-1" />
+              {voiceMode ? "Voice On" : "Voice Off"}
+            </Button>
+          )}
+          {(voiceMode || liveMode) && elevenLabsAvailable && (
             <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-medium" data-testid="badge-elevenlabs">
               ElevenLabs
             </span>
           )}
         </div>
       </div>
+
+      {liveMode && (
+        <div className="px-4 py-2.5 border-b border-red-500/20 bg-red-500/5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <LiveBadge />
+              {liveSpeaker && (
+                <div className="flex items-center gap-1.5">
+                  <VoiceWaveform active={true} color={liveSpeaker === "You" ? "bg-blue-400" : "bg-emerald-400"} />
+                  <span className="text-xs font-medium text-foreground">{liveSpeaker}</span>
+                </div>
+              )}
+              {!liveSpeaker && !isSending && (
+                <span className="text-xs text-muted-foreground">Listening...</span>
+              )}
+              {!liveSpeaker && isSending && (
+                <div className="flex items-center gap-1.5">
+                  <Loader2 className="w-3 h-3 animate-spin text-primary" />
+                  <span className="text-xs text-muted-foreground">Agents thinking...</span>
+                </div>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2 text-[10px] text-red-400 hover:text-red-300"
+              onClick={onToggleLiveMode}
+              data-testid="button-stop-live"
+            >
+              <StopCircle className="w-3 h-3 mr-1" />
+              End Live
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
         {messages.map((msg) => {
@@ -198,7 +270,7 @@ function ChatPanel({
                   <div className="text-sm text-foreground mt-1 whitespace-pre-wrap leading-relaxed">
                     {msg.content}
                   </div>
-                  {!isHuman && (
+                  {!isHuman && !liveMode && (
                     <Button
                       variant="ghost"
                       size="sm"
@@ -231,6 +303,9 @@ function ChatPanel({
                   <div className="flex items-baseline gap-2 flex-wrap">
                     <span className="text-sm font-semibold text-foreground">{sm.agentName}</span>
                     {agent && <span className="text-xs text-muted-foreground">{agent.role}</span>}
+                    {liveMode && !sm.isComplete && (
+                      <VoiceWaveform active={true} color="bg-emerald-400" />
+                    )}
                   </div>
                   <div className="text-sm text-foreground mt-1 whitespace-pre-wrap leading-relaxed">
                     {sm.content}
@@ -254,6 +329,23 @@ function ChatPanel({
           </Card>
         )}
 
+        {liveMode && interimTranscript && (
+          <div className="flex items-start gap-2.5 opacity-60">
+            <div className="w-7 h-7 rounded-md bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+              <Mic className="w-3.5 h-3.5 text-blue-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline gap-2">
+                <span className="text-sm font-semibold text-blue-400">You</span>
+                <VoiceWaveform active={true} color="bg-blue-400" />
+              </div>
+              <div className="text-sm text-foreground mt-1 italic">
+                {interimTranscript}
+              </div>
+            </div>
+          </div>
+        )}
+
         {isSending && streamingMessages.length === 0 && (
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -264,43 +356,66 @@ function ChatPanel({
 
       {meetingStatus === "active" && (
         <div className="p-3 border-t border-border">
-          <div className="flex gap-2">
-            <Button
-              variant={isRecording ? "destructive" : "outline"}
-              size="icon"
-              onClick={toggleVoice}
-              data-testid="button-voice-toggle"
-              className="flex-shrink-0"
-            >
-              {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-            </Button>
-            <Textarea
-              data-testid="input-meeting-message"
-              placeholder={isRecording ? "Listening... speak now" : "Type your message..."}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              className="resize-none text-sm"
-              rows={2}
-            />
-            <Button
-              data-testid="button-send-message"
-              size="icon"
-              onClick={handleSend}
-              disabled={!input.trim() || isSending}
-            >
-              <Send className="w-4 h-4" />
-            </Button>
-          </div>
-          {isRecording && (
-            <div className="flex items-center gap-2 mt-2 text-sm text-red-400">
-              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span>Recording... click mic to stop</span>
+          {!liveMode ? (
+            <>
+              <div className="flex gap-2">
+                <Button
+                  variant={isRecording ? "destructive" : "outline"}
+                  size="icon"
+                  onClick={toggleVoice}
+                  data-testid="button-voice-toggle"
+                  className="flex-shrink-0"
+                >
+                  {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </Button>
+                <Textarea
+                  data-testid="input-meeting-message"
+                  placeholder={isRecording ? "Listening... speak now" : "Type your message..."}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  className="resize-none text-sm"
+                  rows={2}
+                />
+                <Button
+                  data-testid="button-send-message"
+                  size="icon"
+                  onClick={handleSend}
+                  disabled={!input.trim() || isSending}
+                >
+                  <Send className="w-4 h-4" />
+                </Button>
+              </div>
+              <div className="flex items-center justify-between mt-2">
+                {isRecording ? (
+                  <div className="flex items-center gap-2 text-sm text-red-400">
+                    <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                    <span>Recording... click mic to stop</span>
+                  </div>
+                ) : <div />}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 px-3 text-xs border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+                  onClick={onToggleLiveMode}
+                  data-testid="button-go-live"
+                >
+                  <Mic className="w-3 h-3 mr-1.5" />
+                  Go Live
+                </Button>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center justify-center gap-3 py-1">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Mic className="w-4 h-4 text-red-400" />
+                <span>Speak naturally — AI responds automatically</span>
+              </div>
             </div>
           )}
         </div>
@@ -427,8 +542,125 @@ export default function MeetingRoom() {
   const [isWorldStateUpdating, setIsWorldStateUpdating] = useState(false);
   const [interruptMessage, setInterruptMessage] = useState<string | null>(null);
   const [voiceMode, setVoiceMode] = useState(false);
+  const [liveMode, setLiveMode] = useState(false);
+  const [liveSpeaker, setLiveSpeaker] = useState<string | null>(null);
+  const [interimTranscript, setInterimTranscript] = useState("");
   const ttsQueueRef = useRef<{ text: string; agentName: string }[]>([]);
   const mainTTS = useTTS();
+  const liveRecognitionRef = useRef<any>(null);
+  const liveModeRef = useRef(false);
+  const isSendingRef = useRef(false);
+  const ttsDoneCallbackRef = useRef<(() => void) | null>(null);
+
+  const startLiveSTT = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition || !liveModeRef.current) return;
+
+    if (liveRecognitionRef.current) {
+      try { liveRecognitionRef.current.abort(); } catch {}
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingFinal = "";
+
+    recognition.onresult = (event: any) => {
+      if (!liveModeRef.current) return;
+
+      let interim = "";
+      let finalText = "";
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalText += t;
+        } else {
+          interim += t;
+        }
+      }
+
+      if (finalText) {
+        pendingFinal += " " + finalText.trim();
+        setInterimTranscript("");
+        setLiveSpeaker("You");
+
+        if (silenceTimer) clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          if (pendingFinal.trim() && liveModeRef.current && !isSendingRef.current) {
+            const text = pendingFinal.trim();
+            pendingFinal = "";
+            setLiveSpeaker(null);
+            setInterimTranscript("");
+
+            try { recognition.stop(); } catch {}
+
+            handleSendMessage(text);
+          }
+        }, 1200);
+      } else if (interim) {
+        setInterimTranscript(pendingFinal ? pendingFinal.trim() + " " + interim : interim);
+        setLiveSpeaker("You");
+
+        if (silenceTimer) clearTimeout(silenceTimer);
+        silenceTimer = setTimeout(() => {
+          if (pendingFinal.trim() && liveModeRef.current && !isSendingRef.current) {
+            const text = pendingFinal.trim();
+            pendingFinal = "";
+            setLiveSpeaker(null);
+            setInterimTranscript("");
+            try { recognition.stop(); } catch {}
+            handleSendMessage(text);
+          }
+        }, 1200);
+      }
+    };
+
+    recognition.onerror = (e: any) => {
+      if (e.error === "aborted" || e.error === "no-speech") return;
+      if (liveModeRef.current) {
+        setTimeout(() => startLiveSTT(), 500);
+      }
+    };
+
+    recognition.onend = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (pendingFinal.trim() && liveModeRef.current && !isSendingRef.current) {
+        const text = pendingFinal.trim();
+        pendingFinal = "";
+        setLiveSpeaker(null);
+        setInterimTranscript("");
+        handleSendMessage(text);
+      }
+    };
+
+    liveRecognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {}
+  }, []);
+
+  const toggleLiveMode = useCallback(() => {
+    if (liveMode) {
+      liveModeRef.current = false;
+      setLiveMode(false);
+      setLiveSpeaker(null);
+      setInterimTranscript("");
+      if (liveRecognitionRef.current) {
+        try { liveRecognitionRef.current.abort(); } catch {}
+        liveRecognitionRef.current = null;
+      }
+      mainTTS.stop();
+    } else {
+      liveModeRef.current = true;
+      setLiveMode(true);
+      setVoiceMode(true);
+      startLiveSTT();
+    }
+  }, [liveMode, startLiveSTT, mainTTS]);
 
   const { data: meeting, isLoading: meetingLoading } = useQuery<Meeting>({
     queryKey: ["/api/meetings", meetingId],
@@ -452,6 +684,16 @@ export default function MeetingRoom() {
   }, [meeting]);
 
   useEffect(() => {
+    return () => {
+      if (liveRecognitionRef.current) {
+        try { liveRecognitionRef.current.abort(); } catch {}
+        liveRecognitionRef.current = null;
+      }
+      liveModeRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!meetingId) return;
     fetch(`/api/meetings/${meetingId}/worldstate`)
       .then(r => r.json())
@@ -465,6 +707,7 @@ export default function MeetingRoom() {
 
   const handleSendMessage = useCallback(async (content: string) => {
     setIsSending(true);
+    isSendingRef.current = true;
     setStreamingMessages([]);
     setInterruptMessage(null);
     setWorkflowStatus(prev => [...prev, `User message sent`]);
@@ -496,6 +739,9 @@ export default function MeetingRoom() {
               const msg = prev.find(sm => sm.agentId === data.agentId);
               if (msg && voiceMode) {
                 ttsQueueRef.current.push({ text: msg.content, agentName: msg.agentName });
+              }
+              if (msg && liveModeRef.current) {
+                setLiveSpeaker(msg.agentName);
               }
               return prev.map(sm =>
                 sm.agentId === data.agentId
@@ -534,21 +780,52 @@ export default function MeetingRoom() {
             break;
           case "done":
             setIsSending(false);
+            isSendingRef.current = false;
             setStreamingMessages([]);
             queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
-            if (voiceMode && ttsQueueRef.current.length > 0) {
+
+            const hasQueuedTTS = ttsQueueRef.current.length > 0;
+            if (voiceMode && hasQueuedTTS) {
               const items = [...ttsQueueRef.current];
               ttsQueueRef.current = [];
               items.forEach(item => mainTTS.speak(item.text, item.agentName));
             }
+
+            if (liveModeRef.current) {
+              const resumeSTT = () => {
+                setLiveSpeaker(null);
+                setTimeout(() => {
+                  if (liveModeRef.current) startLiveSTT();
+                }, 500);
+              };
+              if (hasQueuedTTS || mainTTS.isSpeaking) {
+                mainTTS.setOnQueueDone(resumeSTT);
+              } else {
+                resumeSTT();
+              }
+            }
             break;
         }
       },
-      () => setIsSending(false)
+      () => {
+        setIsSending(false);
+        isSendingRef.current = false;
+      }
     );
-  }, [meetingId]);
+  }, [meetingId, startLiveSTT]);
 
   const handleEndMeeting = async () => {
+    if (liveMode) {
+      liveModeRef.current = false;
+      setLiveMode(false);
+      setLiveSpeaker(null);
+      setInterimTranscript("");
+      if (liveRecognitionRef.current) {
+        try { liveRecognitionRef.current.abort(); } catch {}
+        liveRecognitionRef.current = null;
+      }
+      mainTTS.stop();
+    }
     setIsSummarizing(true);
     setWorkflowStatus(prev => [...prev, "Consensus Engine activated..."]);
 
@@ -627,6 +904,7 @@ export default function MeetingRoom() {
                   WorldState v{worldState.version}
                 </Badge>
               )}
+              {liveMode && <LiveBadge />}
             </div>
           </div>
         </div>
@@ -671,6 +949,10 @@ export default function MeetingRoom() {
               setVoiceMode(next);
               if (!next) mainTTS.stop();
             }}
+            liveMode={liveMode}
+            onToggleLiveMode={toggleLiveMode}
+            liveSpeaker={liveSpeaker}
+            interimTranscript={interimTranscript}
           />
         </div>
 

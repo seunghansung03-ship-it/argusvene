@@ -6,9 +6,13 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 ## Architecture - 5-Layer Decision Engine
 
 ### Layer 1: Voice/Text Input
+- **Live Mode** ("Go Live" button): Continuous STT → auto-send on 1.2s silence → agents respond with TTS → STT resumes after TTS finishes
 - Browser-based speech recognition (Web Speech API) for voice input
-- Text input fallback
-- Real-time transcript with speaker labels
+- ElevenLabs TTS auto-play in Live Mode with per-agent voices
+- Feedback prevention: STT pauses while TTS plays, resumes via `setOnQueueDone` callback
+- Text input fallback with manual send
+- Real-time transcript with speaker labels + interim transcript display
+- Visual indicators: LIVE badge, voice waveform animation, current speaker name
 
 ### Layer 2: World Compiler (`server/world-compiler.ts`)
 - Processes transcript through Gemini to extract/update structured WorldState
