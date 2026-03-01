@@ -19,6 +19,7 @@ import {
   AlertTriangle, Zap, Volume2, VolumeX,
 } from "lucide-react";
 import { useTTS } from "@/hooks/use-tts";
+import { useAuth } from "@/hooks/use-auth";
 import type { Meeting, MeetingMessage, AgentPersona, Artifact, Decision, Task } from "@shared/schema";
 
 interface StreamingMessage {
@@ -525,6 +526,7 @@ export default function MeetingRoom() {
   const params = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { user } = useAuth();
   const meetingId = parseInt(params.id || "0");
 
   const [isSending, setIsSending] = useState(false);
@@ -973,6 +975,7 @@ export default function MeetingRoom() {
               comparison={comparison}
               counterfactuals={counterfactuals}
               isUpdating={isWorldStateUpdating}
+              userId={user?.uid || null}
             />
           )}
         </div>

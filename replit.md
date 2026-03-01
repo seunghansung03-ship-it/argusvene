@@ -37,6 +37,13 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 - Assumption Panel (confidence bars, challenge tracking)
 - Counterfactual display
 - Real-time updates via SSE
+- **UI Navigator (Browser Panel)**: Playwright-powered headless browser with Gemini Vision
+  - Per-user browser session isolation via `BrowserContext`
+  - WebSocket screenshot streaming (`/ws/browser?userId=xxx`)
+  - Gemini 2.5 Flash Vision loop: screenshot → analyze → click/type/scroll → repeat
+  - Canvas rendering of live browser view with click passthrough
+  - AI command input: user describes task → Gemini executes multi-step browser automation
+  - Auto-cleanup of inactive sessions (10 min timeout)
 
 ### Layer 5: Decision Memory
 - Full reasoning history with premises, chosen options, rejected alternatives
@@ -64,6 +71,7 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 - **AI Provider:** Google Gemini (2.5 Flash) via Replit AI Integrations (primary)
 - **Provider Abstraction:** `server/ai-provider.ts` - Gemini default, OpenAI fallback
 - **TTS:** ElevenLabs API (`eleven_multilingual_v2` model, per-agent unique voices), browser SpeechSynthesis fallback
+- **Browser Automation:** Playwright (Nix Chromium) for UI Navigator
 - **Visualization:** Mermaid.js for decision trees
 - **Routing:** wouter
 - **State:** TanStack React Query
@@ -108,6 +116,9 @@ WorldState {
 - `server/ai-provider.ts` - Multi-provider AI abstraction
 - `server/elevenlabs.ts` - ElevenLabs TTS with per-agent voice mapping
 - `server/assistant-actions.ts` - Quick chat action execution engine (workspace/agent/meeting CRUD)
+- `server/browser-manager.ts` - Playwright browser session manager (per-user isolation)
+- `server/browser-vision.ts` - Gemini Vision screenshot analysis + action planning
+- `client/src/components/browser-panel.tsx` - Browser panel UI (canvas rendering, URL bar, AI command input)
 - `server/routes.ts` - All API routes including AI streaming
 - `server/storage.ts` - Database storage layer
 - `shared/schema.ts` - Drizzle schema definitions
@@ -130,6 +141,14 @@ WorldState {
 - `GET /api/tts/status` - ElevenLabs availability + voice mapping
 - `POST /api/tts/synthesize` - Text-to-speech synthesis (returns audio/mpeg, optional voiceId override)
 - `GET /api/tts/voices` - List all ElevenLabs voices for voice selection
+- `POST /api/browser/session` - Create per-user Playwright browser session
+- `DELETE /api/browser/session` - Destroy browser session
+- `POST /api/browser/navigate` - Navigate to URL
+- `POST /api/browser/action` - Perform browser action (click/type/scroll/press)
+- `GET /api/browser/screenshot` - Get current screenshot as JPEG
+- `GET /api/browser/status` - Check browser session status
+- `POST /api/browser/ai-command` - AI Vision command loop (SSE) - Gemini analyzes screenshots and executes multi-step tasks
+- `WS /ws/browser?userId=xxx` - WebSocket for real-time screenshot streaming
 
 ### SSE Event Types (Meeting Messages)
 - `user_message` - User's message saved

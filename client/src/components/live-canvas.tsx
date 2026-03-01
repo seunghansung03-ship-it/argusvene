@@ -4,8 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   GitBranch, BarChart3, Shield, AlertTriangle,
-  TrendingUp, TrendingDown, Minus, Target,
+  TrendingUp, TrendingDown, Minus, Target, Monitor,
 } from "lucide-react";
+import BrowserPanel from "./browser-panel";
 
 interface WorldState {
   sessionId: string;
@@ -33,6 +34,7 @@ interface LiveCanvasProps {
   comparison: { scenarios: any[]; metricKeys: string[] } | null;
   counterfactuals: Counterfactual[];
   isUpdating: boolean;
+  userId?: string | null;
 }
 
 function MermaidRenderer({ spec }: { spec: string }) {
@@ -224,6 +226,7 @@ export default function LiveCanvas({
   comparison,
   counterfactuals,
   isUpdating,
+  userId,
 }: LiveCanvasProps) {
   const hasContent = worldState && (
     worldState.options.length > 0 ||
@@ -231,20 +234,6 @@ export default function LiveCanvas({
     worldState.scenarios.length > 0 ||
     worldState.metrics.length > 0
   );
-
-  if (!hasContent && !isUpdating) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-center px-6">
-        <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-          <GitBranch className="w-8 h-8 text-muted-foreground" />
-        </div>
-        <h3 className="text-lg font-semibold text-foreground mb-2">Live Decision Canvas</h3>
-        <p className="text-sm text-muted-foreground max-w-md">
-          Start discussing strategic options and the canvas will visualize decision trees, scenarios, and assumptions in real-time.
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div className="h-full flex flex-col">
@@ -265,7 +254,7 @@ export default function LiveCanvas({
       </div>
 
       <div className="flex-1 overflow-hidden">
-        <Tabs defaultValue="tree" className="h-full flex flex-col">
+        <Tabs defaultValue={hasContent || isUpdating ? "tree" : "browser"} className="h-full flex flex-col">
           <TabsList className="mx-3 mt-2 flex-shrink-0">
             <TabsTrigger value="tree" className="text-xs" data-testid="canvas-tab-tree">
               <GitBranch className="w-3 h-3 mr-1" />
@@ -279,11 +268,28 @@ export default function LiveCanvas({
               <Shield className="w-3 h-3 mr-1" />
               Assumptions
             </TabsTrigger>
+            <TabsTrigger value="browser" className="text-xs" data-testid="canvas-tab-browser">
+              <Monitor className="w-3 h-3 mr-1" />
+              Browser
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="tree" className="flex-1 overflow-auto m-0 mt-0">
-            {mermaidSpec && <MermaidRenderer spec={mermaidSpec} />}
-            {counterfactuals.length > 0 && <CounterfactualPanel counterfactuals={counterfactuals} />}
+            {!hasContent && !isUpdating ? (
+              <div className="flex flex-col items-center justify-center h-full text-center px-6">
+                <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-3">
+                  <GitBranch className="w-6 h-6 text-muted-foreground" />
+                </div>
+                <p className="text-sm text-muted-foreground max-w-md">
+                  Start discussing strategic options to visualize decision trees here.
+                </p>
+              </div>
+            ) : (
+              <>
+                {mermaidSpec && <MermaidRenderer spec={mermaidSpec} />}
+                {counterfactuals.length > 0 && <CounterfactualPanel counterfactuals={counterfactuals} />}
+              </>
+            )}
           </TabsContent>
 
           <TabsContent value="compare" className="flex-1 overflow-auto m-0 mt-0">
@@ -293,6 +299,10 @@ export default function LiveCanvas({
 
           <TabsContent value="assumptions" className="flex-1 overflow-auto m-0 mt-0">
             {worldState && <AssumptionPanel assumptions={worldState.assumptions} />}
+          </TabsContent>
+
+          <TabsContent value="browser" className="flex-1 overflow-hidden m-0 mt-0">
+            <BrowserPanel userId={userId || null} />
           </TabsContent>
         </Tabs>
       </div>

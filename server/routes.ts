@@ -11,6 +11,9 @@ import { createEmptyWorldState, type WorldState } from "../shared/types/worldsta
 import { synthesizeSpeech, isElevenLabsAvailable, getAvailableVoices, fetchElevenLabsVoices } from "./elevenlabs";
 import { insertAgentPersonaSchema } from "@shared/schema";
 import { executeAction, getActionDescriptions, type ActionResult } from "./assistant-actions";
+import { createSession, destroySession, navigateTo, performAction, getScreenshot, getCurrentUrl, hasSession, addScreenshotListener, type BrowserAction } from "./browser-manager";
+import { analyzeScreenshot, describeScreen } from "./browser-vision";
+import { WebSocketServer, WebSocket } from "ws";
 
 const audioBodyParser = express.json({ limit: "50mb" });
 
@@ -1122,5 +1125,228 @@ RULES:
     }
   });
 
+  // ─── Browser Navigator REST API ───
+
+  function requireBrowserAuth(req: express.Request, res: express.Response): string | null {
+    const userId = getUserId(req);
+    if (!userId) {
+      res.status(401).json({ error: "Authentication required for browser sessions" });
+      return null;
+    }
+    return userId;
+  }
+
+  const BLOCKED_URL_PATTERNS = [
+    /^https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0|10\.\d|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/i,
+    /^https?:\/\/metadata\.google\.internal/i,
+    /^https?:\/\/169\.254\./i,
+    /^file:/i,
+  ];
+
+  function isUrlAllowed(url: string): boolean {
+    return !BLOCKED_URL_PATTERNS.some(pattern => pattern.test(url));
+  }
+
+  app.post("/api/browser/session", async (req, res) => {
+    try {
+      const userId = requireBrowserAuth(req, res);
+      if (!userId) return;
+      const result = await createSession(userId);
+      res.json(result);
+    } catch (e: any) {
+      console.error("[browser] Session creation error:", e.message);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.delete("/api/browser/session", async (req, res) => {
+    try {
+      const userId = requireBrowserAuth(req, res);
+      if (!userId) return;
+      await destroySession(userId);
+      res.json({ success: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/browser/navigate", async (req, res) => {
+    try {
+      const userId = requireBrowserAuth(req, res);
+      if (!userId) return;
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: "URL required" });
+      const fullUrl = url.startsWith("http") ? url : "https://" + url;
+      if (!isUrlAllowed(fullUrl)) return res.status(403).json({ error: "URL not allowed" });
+      const result = await navigateTo(userId, url);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.post("/api/browser/action", async (req, res) => {
+    try {
+      const userId = requireBrowserAuth(req, res);
+      if (!userId) return;
+      const action: BrowserAction = req.body;
+      const result = await performAction(userId, action);
+      res.json(result);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/browser/screenshot", async (req, res) => {
+    try {
+      const userId = requireBrowserAuth(req, res);
+      if (!userId) return;
+      const screenshot = await getScreenshot(userId);
+      if (!screenshot) return res.status(404).json({ error: "No session" });
+      res.set("Content-Type", "image/jpeg");
+      res.send(screenshot);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  app.get("/api/browser/status", async (req, res) => {
+    const userId = getUserId(req);
+    if (!userId) return res.json({ active: false, url: null });
+    res.json({
+      active: hasSession(userId),
+      url: hasSession(userId) ? await getCurrentUrl(userId) : null,
+    });
+  });
+
+  app.post("/api/browser/ai-command", async (req, res) => {
+    const userId = requireBrowserAuth(req, res);
+    if (!userId) return;
+    const { command } = req.body;
+    if (!command) return res.status(400).json({ error: "Command required" });
+    if (!hasSession(userId)) return res.status(400).json({ error: "No browser session" });
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    const actionHistory: string[] = [];
+    const MAX_STEPS = 15;
+    let aborted = false;
+
+    req.on("close", () => { aborted = true; });
+
+    try {
+      for (let step = 0; step < MAX_STEPS && !aborted; step++) {
+        const screenshot = await getScreenshot(userId);
+        if (!screenshot) {
+          res.write(`data: ${JSON.stringify({ status: "error", summary: "Lost browser session" })}\n\n`);
+          break;
+        }
+
+        const base64 = screenshot.toString("base64");
+        const result = await analyzeScreenshot(base64, command, actionHistory);
+
+        if (aborted) break;
+        res.write(`data: ${JSON.stringify({
+          step: step + 1,
+          thinking: result.thinking,
+          status: result.status,
+          summary: result.summary,
+          actionType: result.action.type,
+        })}\n\n`);
+
+        if (result.status === "done" || result.status === "error") break;
+
+        if (result.action.type === "navigate" && result.action.url) {
+          const aiNavUrl = result.action.url.startsWith("http") ? result.action.url : "https://" + result.action.url;
+          if (!isUrlAllowed(aiNavUrl)) {
+            actionHistory.push(`Blocked navigation to internal URL: ${result.action.url}`);
+          } else {
+            await navigateTo(userId, result.action.url);
+            actionHistory.push(`Navigated to ${result.action.url}`);
+          }
+        } else {
+          const actionResult = await performAction(userId, result.action as BrowserAction);
+          actionHistory.push(`${result.action.type}: ${actionResult.message}`);
+        }
+      }
+
+      if (!aborted) {
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        res.end();
+      }
+    } catch (e: any) {
+      if (!aborted) {
+        res.write(`data: ${JSON.stringify({ status: "error", summary: e.message })}\n\n`);
+        res.end();
+      }
+    }
+  });
+
+  // ─── Browser Navigator WebSocket (screenshot streaming) ───
+  const wss = new WebSocketServer({ server: httpServer, path: "/ws/browser" });
+
+  wss.on("connection", (ws, req) => {
+    const wsUrl = new URL(req.url || "", `http://${req.headers.host}`);
+    const userId = wsUrl.searchParams.get("userId");
+    if (!userId) {
+      ws.send(JSON.stringify({ type: "error", message: "Authentication required" }));
+      ws.close();
+      return;
+    }
+    console.log(`[ws/browser] Connected: ${userId}`);
+
+    let removeListener: (() => void) | null = null;
+
+    const setupStreaming = () => {
+      if (removeListener) removeListener();
+
+      if (!hasSession(userId)) return;
+
+      removeListener = addScreenshotListener(userId, (screenshot) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(screenshot);
+        }
+      });
+    };
+
+    ws.on("message", async (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.type === "start") {
+          await createSession(userId);
+          setupStreaming();
+          ws.send(JSON.stringify({ type: "session_started" }));
+        } else if (msg.type === "navigate") {
+          const navUrl = msg.url?.startsWith("http") ? msg.url : "https://" + msg.url;
+          if (!isUrlAllowed(navUrl)) {
+            ws.send(JSON.stringify({ type: "error", message: "URL not allowed" }));
+            return;
+          }
+          const result = await navigateTo(userId, msg.url);
+          setupStreaming();
+          ws.send(JSON.stringify({ type: "navigated", ...result }));
+        } else if (msg.type === "action") {
+          const result = await performAction(userId, msg.action);
+          ws.send(JSON.stringify({ type: "action_result", ...result }));
+        } else if (msg.type === "stop") {
+          if (removeListener) removeListener();
+          await destroySession(userId);
+          ws.send(JSON.stringify({ type: "session_stopped" }));
+        }
+      } catch (e: any) {
+        ws.send(JSON.stringify({ type: "error", message: e.message }));
+      }
+    });
+
+    ws.on("close", () => {
+      console.log(`[ws/browser] Disconnected: ${userId}`);
+      if (removeListener) removeListener();
+    });
+  });
+
   return httpServer;
 }
+
