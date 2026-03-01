@@ -15,7 +15,8 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 - Real-time transcript with speaker labels + interim transcript display
 - Visual indicators: LIVE badge, voice waveform animation, current speaker name
 - **Natural conversation prompts**: Agents speak conversationally (2-4 sentences, no markdown), reference each other by name, ask follow-ups
-- **Agent-to-agent discussion**: After initial responses, one random agent adds a reaction to what others said, creating organic inter-agent dialogue
+- **Smart Agent Routing** (3-tier): 1) Direct name detection (regex: "Atlas 말해봐" → Atlas only), 2) Keyword domain matching (finance/tech/strategy/marketing keywords → relevant agent), 3) AI router fallback (Gemini chatJSON picks 2-3 agents)
+- **Agent-to-agent discussion**: After 2+ agents respond, one additional agent adds a reaction to what others said
 - **Immediate per-agent TTS**: Each agent's voice plays as soon as they finish (not batched at end), creating a natural sequential conversation flow
 
 ### Layer 2: World Compiler (`server/world-compiler.ts`)

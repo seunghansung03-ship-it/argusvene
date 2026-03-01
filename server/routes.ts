@@ -276,8 +276,128 @@ export async function registerRoutes(
       const validAgents = agents.filter(Boolean) as NonNullable<typeof agents[0]>[];
 
       const previousMessages = await storage.getMeetingMessages(meetingId);
+      const userContent = parsed.data.content;
 
-      for (const agent of validAgents) {
+      const agentRoster = validAgents.map(a => `- ${a.name} (${a.role})`).join("\n");
+      const recentContext = previousMessages.slice(-6).map(m => `[${m.senderName}]: ${m.content}`).join("\n");
+
+      let selectedAgents = validAgents;
+      let shouldReact = false;
+
+      const nameAliases: Record<string, string[]> = {
+        atlas: ["atlas", "아틀라스", "atlus"],
+        nova: ["nova", "노바"],
+        sage: ["sage", "세이지"],
+        pixel: ["pixel", "픽셀"],
+      };
+
+      const lowerContent = userContent.toLowerCase();
+      const directlyNamed = validAgents.filter(a => {
+        const key = a.name.toLowerCase();
+        const aliases = nameAliases[key] || [key];
+        return aliases.some(alias => {
+          const idx = lowerContent.indexOf(alias);
+          if (idx === -1) return false;
+          const before = idx > 0 ? lowerContent[idx - 1] : " ";
+          const after = idx + alias.length < lowerContent.length ? lowerContent[idx + alias.length] : " ";
+          const isBoundary = (ch: string) => /[\s,\.!?:;'"()~\-]/.test(ch) || ch === " ";
+          return isBoundary(before) && isBoundary(after);
+        });
+      });
+
+      if (directlyNamed.length > 0) {
+        selectedAgents = directlyNamed;
+        shouldReact = false;
+        console.log(`[Router] Direct name match: ${directlyNamed.map(a => a.name).join(", ")}`);
+      } else {
+        const domainKeywords: Record<string, string[]> = {
+          finance: ["예산", "매출", "비용", "현금", "수익", "투자", "runway", "burn rate", "budget", "revenue", "cost", "profit", "cash", "financial", "pricing", "roi", "capital", "funding", "valuation", "재무", "손익", "흐름", "할인", "가격"],
+          tech: ["기술", "개발", "코드", "서버", "api", "배포", "아키텍처", "스택", "인프라", "데이터베이스", "tech", "code", "deploy", "architecture", "backend", "frontend", "scalab", "infra", "database", "engineering", "시스템", "플랫폼"],
+          strategy: ["전략", "비전", "로드맵", "경쟁", "시장", "포지셔닝", "파트너", "strategy", "vision", "roadmap", "compet", "market", "positioning", "pivot", "mission", "growth", "방향", "목표"],
+          marketing: ["마케팅", "브랜드", "디자인", "ux", "ui", "사용자", "고객", "캠페인", "광고", "콘텐츠", "marketing", "brand", "design", "user", "customer", "campaign", "advertis", "content", "creative", "sns", "인플루언서", "홍보"],
+        };
+
+        const agentDomainMap: Record<string, string> = {};
+        for (const agent of validAgents) {
+          const roleLower = agent.role.toLowerCase();
+          if (roleLower.includes("finance") || roleLower.includes("재무")) agentDomainMap[agent.name] = "finance";
+          else if (roleLower.includes("tech") || roleLower.includes("기술") || roleLower.includes("engineer")) agentDomainMap[agent.name] = "tech";
+          else if (roleLower.includes("strateg") || roleLower.includes("전략")) agentDomainMap[agent.name] = "strategy";
+          else if (roleLower.includes("market") || roleLower.includes("design") || roleLower.includes("마케팅") || roleLower.includes("디자인") || roleLower.includes("creative")) agentDomainMap[agent.name] = "marketing";
+        }
+
+        const domainScores: Record<string, number> = { finance: 0, tech: 0, strategy: 0, marketing: 0 };
+        for (const [domain, keywords] of Object.entries(domainKeywords)) {
+          for (const kw of keywords) {
+            if (lowerContent.includes(kw)) domainScores[domain]++;
+          }
+        }
+
+        const maxScore = Math.max(...Object.values(domainScores));
+        const matchedDomains = Object.entries(domainScores).filter(([, s]) => s > 0 && s >= maxScore - 1).map(([d]) => d);
+
+        if (maxScore >= 2 && matchedDomains.length <= 2) {
+          const domainAgents = validAgents.filter(a => {
+            const domain = agentDomainMap[a.name];
+            return domain && matchedDomains.includes(domain);
+          });
+          if (domainAgents.length > 0) {
+            selectedAgents = domainAgents;
+            shouldReact = domainAgents.length >= 2;
+            console.log(`[Router] Keyword domain match (${matchedDomains.join(",")}): ${domainAgents.map(a => a.name).join(", ")}`);
+          }
+        }
+
+        if (selectedAgents === validAgents) {
+          try {
+            const routerResponse = await aiClient.chatJSON([
+              {
+                role: "system",
+                content: `You are a meeting conversation router. Pick which agents should respond.
+
+Available agents (with their domains):
+${validAgents.map(a => `- ${a.name} (${a.role})`).join("\n")}
+
+Recent conversation:
+${recentContext || "(meeting just started)"}
+
+RULES:
+1. For domain-specific questions, pick only the 1-2 most relevant agents based on their role.
+2. For broad questions inviting discussion, pick 2-3 agents (never all ${validAgents.length}).
+3. For the first message in a meeting, pick 2-3 agents.
+4. Set react to true only if 2+ agents are selected.
+
+Return JSON: {"agents": ["Name1", "Name2"], "react": true}`,
+              },
+              { role: "user", content: userContent },
+            ]);
+
+            try {
+              const routing = JSON.parse(routerResponse);
+              if (Array.isArray(routing.agents) && routing.agents.length > 0) {
+                const namedAgents = routing.agents
+                  .map((name: string) => validAgents.find(a => a.name.toLowerCase() === name.toLowerCase()))
+                  .filter(Boolean) as typeof validAgents;
+                if (namedAgents.length > 0) {
+                  selectedAgents = namedAgents;
+                  console.log(`[Router] AI selected: ${namedAgents.map(a => a.name).join(", ")}`);
+                }
+              }
+              shouldReact = routing.react === true && selectedAgents.length >= 2;
+            } catch {
+              selectedAgents = validAgents.slice(0, 2);
+              console.log(`[Router] JSON parse failed, fallback to first 2`);
+            }
+          } catch (routerErr) {
+            selectedAgents = validAgents.slice(0, 2);
+            console.log(`[Router] AI call failed, fallback to first 2`, routerErr);
+          }
+        }
+      }
+
+      const respondedAgents: { agentId: number; agentName: string; content: string }[] = [];
+
+      for (const agent of selectedAgents) {
         if (aborted) break;
 
         try {
@@ -285,6 +405,12 @@ export async function registerRoutes(
             role: (m.senderType === "human" ? "user" : "assistant") as "user" | "assistant",
             content: m.senderType === "human" ? m.content : `[${m.senderName}]: ${m.content}`,
           }));
+
+          if (respondedAgents.length > 0) {
+            for (const prev of respondedAgents) {
+              chatHistory.push({ role: "assistant", content: `[${prev.agentName}]: ${prev.content}` });
+            }
+          }
 
           const otherAgentNames = validAgents.filter(a => a.id !== agent.id).map(a => `${a.name} (${a.role})`).join(", ");
           const systemMsg: ChatMessage = {
@@ -295,15 +421,16 @@ You are ${agent.name}, the ${agent.role}. You are participating in a LIVE voice 
 
 CONVERSATION RULES:
 - Speak naturally as if in a real meeting — use conversational tone, not formal reports
-- Address others by name: "I agree with Atlas on the timeline, but..." or "Nova, have you considered..."
+- Address others by name when responding to their points
 - React to what was JUST said — don't repeat the full context, respond directly
 - Express opinions with personality: show enthusiasm, skepticism, concern, excitement
-- Use natural speech patterns: "Look, here's the thing...", "Actually, I'd push back on that...", "That's a solid point, and building on it..."
+- Use natural speech patterns: "Look, here's the thing...", "Actually, I'd push back on that..."
 - Keep responses SHORT for voice (2-4 sentences typical, max 150 words) — this is a conversation, not a presentation
 - If you disagree, say so directly but constructively
 - Ask the human founder follow-up questions to keep the dialogue flowing
 - Avoid bullet points, headers, or markdown formatting — speak in paragraphs as you would out loud
 - Don't summarize the entire discussion — just add your perspective on the latest point
+- If another agent just spoke in this round, acknowledge or respond to their point naturally
 - Use the user's language (if they speak Korean, respond in Korean; if English, respond in English)`,
           };
 
@@ -320,6 +447,8 @@ CONVERSATION RULES:
               res.write(`data: ${JSON.stringify({ type: "agent_chunk", agentId: agent.id, content: chunk.content })}\n\n`);
             }
           }
+
+          respondedAgents.push({ agentId: agent.id, agentName: agent.name, content: fullResponse });
 
           const savedMsg = await storage.createMeetingMessage({
             meetingId,
@@ -340,70 +469,72 @@ CONVERSATION RULES:
         }
       }
 
-      const firstRoundResponses: { agentId: number; agentName: string; content: string }[] = [];
-      const latestMessages = await storage.getMeetingMessages(meetingId);
+      if (!aborted && shouldReact && respondedAgents.length >= 2) {
+        const nonRespondedAgents = validAgents.filter(a => !respondedAgents.find(r => r.agentId === a.id));
+        const reactor = nonRespondedAgents.length > 0
+          ? nonRespondedAgents[Math.floor(Math.random() * nonRespondedAgents.length)]
+          : respondedAgents[Math.floor(Math.random() * respondedAgents.length)];
+        const reactorAgent = validAgents.find(a => a.id === (reactor.id ?? (reactor as any).agentId));
 
-      for (const agent of validAgents) {
-        const lastMsg = latestMessages.find(m => m.agentId === agent.id && m.senderType === "agent");
-        if (lastMsg) firstRoundResponses.push({ agentId: agent.id, agentName: agent.name, content: lastMsg.content });
-      }
+        if (reactorAgent) {
+          const othersContext = respondedAgents
+            .filter(r => r.agentId !== reactorAgent.id)
+            .map(r => `[${r.agentName}]: ${r.content}`)
+            .join("\n\n");
 
-      if (!aborted && validAgents.length >= 2 && firstRoundResponses.length >= 2) {
-        const reactor = validAgents[Math.floor(Math.random() * validAgents.length)];
-        const othersContext = firstRoundResponses
-          .filter(r => r.agentId !== reactor.id)
-          .map(r => `[${r.agentName}]: ${r.content}`)
-          .join("\n\n");
+          try {
+            const reactionSystemMsg: ChatMessage = {
+              role: "system",
+              content: `${reactorAgent.systemPrompt}
 
-        try {
-          const reactionSystemMsg: ChatMessage = {
-            role: "system",
-            content: `${reactor.systemPrompt}
-
-You are ${reactor.name}, the ${reactor.role}. You just heard your colleagues respond in a live meeting. Now it's your turn to REACT to what they said — agree, disagree, build on their ideas, or challenge them.
+You are ${reactorAgent.name}, the ${reactorAgent.role}. You just heard your colleagues respond in a live meeting. React to what they said.
 
 RULES:
-- Address the other agents BY NAME: "${firstRoundResponses.filter(r => r.agentId !== reactor.id).map(r => r.agentName).join(", ")}"
+- Address the other agents BY NAME
 - React specifically to something they said — don't just repeat yourself
 - Be direct and conversational, 1-3 sentences max
-- Show your personality: "I actually disagree with Nova here because..." or "Great point from Atlas — and I'd add..."
-- Use the user's language (Korean if they speak Korean, English if English)
+- Use the user's language
 - Do NOT use markdown formatting`,
-          };
+            };
 
-          const reactionHistory: ChatMessage[] = [
-            ...latestMessages.slice(-8).map(m => ({
-              role: (m.senderType === "human" ? "user" : "assistant") as "user" | "assistant",
-              content: m.senderType === "human" ? m.content : `[${m.senderName}]: ${m.content}`,
-            })),
-            { role: "user", content: `[System]: Now react to what the other agents just said:\n\n${othersContext}` },
-          ];
+            const reactionHistory: ChatMessage[] = [
+              ...previousMessages.slice(-4).map(m => ({
+                role: (m.senderType === "human" ? "user" : "assistant") as "user" | "assistant",
+                content: m.senderType === "human" ? m.content : `[${m.senderName}]: ${m.content}`,
+              })),
+              ...respondedAgents.map(r => ({
+                role: "assistant" as const,
+                content: `[${r.agentName}]: ${r.content}`,
+              })),
+              { role: "user" as const, content: `[System]: Now react briefly to what the others just said:\n\n${othersContext}` },
+            ];
 
-          let reactionContent = "";
-          if (!aborted) {
-            res.write(`data: ${JSON.stringify({ type: "agent_start", agentId: reactor.id, agentName: reactor.name })}\n\n`);
-          }
-
-          for await (const chunk of aiClient.chatStream([reactionSystemMsg, ...reactionHistory])) {
-            if (aborted) break;
-            if (chunk.content) {
-              reactionContent += chunk.content;
-              res.write(`data: ${JSON.stringify({ type: "agent_chunk", agentId: reactor.id, content: chunk.content })}\n\n`);
+            let reactionContent = "";
+            if (!aborted) {
+              res.write(`data: ${JSON.stringify({ type: "agent_start", agentId: reactorAgent.id, agentName: reactorAgent.name })}\n\n`);
             }
-          }
 
-          if (reactionContent.trim() && !aborted) {
-            const savedReaction = await storage.createMeetingMessage({
-              meetingId,
-              senderType: "agent",
-              senderName: reactor.name,
-              agentId: reactor.id,
-              content: reactionContent,
-            });
-            res.write(`data: ${JSON.stringify({ type: "agent_done", agentId: reactor.id, data: savedReaction })}\n\n`);
+            for await (const chunk of aiClient.chatStream([reactionSystemMsg, ...reactionHistory])) {
+              if (aborted) break;
+              if (chunk.content) {
+                reactionContent += chunk.content;
+                res.write(`data: ${JSON.stringify({ type: "agent_chunk", agentId: reactorAgent.id, content: chunk.content })}\n\n`);
+              }
+            }
+
+            if (reactionContent.trim() && !aborted) {
+              const savedReaction = await storage.createMeetingMessage({
+                meetingId,
+                senderType: "agent",
+                senderName: reactorAgent.name,
+                agentId: reactorAgent.id,
+                content: reactionContent,
+              });
+              res.write(`data: ${JSON.stringify({ type: "agent_done", agentId: reactorAgent.id, data: savedReaction })}\n\n`);
+            }
+          } catch (error) {
+            console.error(`Reaction round error for ${reactorAgent.name}:`, error);
           }
-        } catch (error) {
-          console.error(`Reaction round error for ${reactor.name}:`, error);
         }
       }
 

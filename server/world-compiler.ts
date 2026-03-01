@@ -50,9 +50,33 @@ Produce the updated WorldState. Increment version by 1. Keep all existing data a
     const result = await aiClient.chatJSON([
       { role: "system", content: COMPILE_PROMPT },
       { role: "user", content: prompt },
-    ]);
+    ], 4096);
 
-    const parsed = JSON.parse(result);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(result);
+    } catch {
+      let cleaned = result.replace(/[\x00-\x1f]/g, " ");
+      const lastBrace = cleaned.lastIndexOf("}");
+      if (lastBrace > 0) {
+        cleaned = cleaned.substring(0, lastBrace + 1);
+        let braceCount = 0;
+        for (const ch of cleaned) {
+          if (ch === "{") braceCount++;
+          if (ch === "}") braceCount--;
+        }
+        while (braceCount > 0) { cleaned += "}"; braceCount--; }
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch {
+          console.warn("World Compiler: Could not repair JSON, returning existing state");
+          return state;
+        }
+      } else {
+        console.warn("World Compiler: No valid JSON found, returning existing state");
+        return state;
+      }
+    }
     const validated: WorldState = {
       sessionId,
       version: (state.version || 0) + 1,
