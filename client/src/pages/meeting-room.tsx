@@ -130,6 +130,7 @@ function ChatPanel({
   }, [messages, streamingMessages, interimTranscript]);
 
   useEffect(() => {
+    if (liveMode) return;
     const anyTTSPlaying = ttsPlaying || isSpeaking;
     if (anyTTSPlaying && isRecording) {
       wasRecordingBeforeTTS.current = true;
@@ -139,7 +140,7 @@ function ChatPanel({
       wasRecordingBeforeTTS.current = false;
       setTimeout(() => startRecording(), 300);
     }
-  }, [ttsPlaying, isSpeaking]);
+  }, [ttsPlaying, isSpeaking, liveMode]);
 
   const startRecording = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -655,6 +656,29 @@ export default function MeetingRoom() {
     let silenceTimer: ReturnType<typeof setTimeout> | null = null;
     let pendingFinal = "";
 
+    const SILENCE_TIMEOUT = 1000;
+
+    const flushAndSend = () => {
+      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
+      if (!pendingFinal.trim() || !liveModeRef.current) return;
+
+      const text = pendingFinal.trim();
+      pendingFinal = "";
+      setLiveSpeaker(null);
+      setInterimTranscript("");
+      try { recognition.stop(); } catch {}
+      handleSendMessageRef.current(text, true);
+    };
+
+    const scheduleFlush = () => {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => {
+        if (!isSendingRef.current) {
+          flushAndSend();
+        }
+      }, SILENCE_TIMEOUT);
+    };
+
     recognition.onresult = (event: any) => {
       if (!liveModeRef.current) return;
 
@@ -670,46 +694,40 @@ export default function MeetingRoom() {
         }
       }
 
+      if (mainTTS.isSpeaking || isSendingRef.current) {
+        if (finalText || (interim && interim.split(" ").length >= 2)) {
+          mainTTS.stop();
+          mainTTS.setOnQueueDone(null);
+          if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+            abortControllerRef.current = null;
+          }
+          setIsSending(false);
+          isSendingRef.current = false;
+          setStreamingMessages([]);
+          setStreamingAgentId(null);
+          setInterruptMessage(null);
+          setLiveSpeaker("You");
+          queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
+        }
+      }
+
       if (finalText) {
         pendingFinal += " " + finalText.trim();
         setInterimTranscript("");
         setLiveSpeaker("You");
-
-        if (silenceTimer) clearTimeout(silenceTimer);
-        silenceTimer = setTimeout(() => {
-          if (pendingFinal.trim() && liveModeRef.current && !isSendingRef.current) {
-            const text = pendingFinal.trim();
-            pendingFinal = "";
-            setLiveSpeaker(null);
-            setInterimTranscript("");
-
-            try { recognition.stop(); } catch {}
-
-            handleSendMessage(text);
-          }
-        }, 2500);
+        scheduleFlush();
       } else if (interim) {
         setInterimTranscript(pendingFinal ? pendingFinal.trim() + " " + interim : interim);
         setLiveSpeaker("You");
-
-        if (silenceTimer) clearTimeout(silenceTimer);
-        silenceTimer = setTimeout(() => {
-          if (pendingFinal.trim() && liveModeRef.current && !isSendingRef.current) {
-            const text = pendingFinal.trim();
-            pendingFinal = "";
-            setLiveSpeaker(null);
-            setInterimTranscript("");
-            try { recognition.stop(); } catch {}
-            handleSendMessage(text);
-          }
-        }, 2500);
+        scheduleFlush();
       }
     };
 
     recognition.onerror = (e: any) => {
       if (e.error === "aborted" || e.error === "no-speech") return;
       if (liveModeRef.current) {
-        setTimeout(() => startLiveSTT(), 500);
+        setTimeout(() => startLiveSTT(), 300);
       }
     };
 
@@ -720,7 +738,7 @@ export default function MeetingRoom() {
         pendingFinal = "";
         setLiveSpeaker(null);
         setInterimTranscript("");
-        handleSendMessage(text);
+        handleSendMessageRef.current(text, true);
       }
     };
 
@@ -728,7 +746,7 @@ export default function MeetingRoom() {
     try {
       recognition.start();
     } catch {}
-  }, []);
+  }, [meetingId, mainTTS]);
 
   const toggleLiveMode = useCallback(() => {
     if (liveMode) {
@@ -879,6 +897,9 @@ export default function MeetingRoom() {
             setStreamingMessages([]);
             abortControllerRef.current = null;
             queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
+            if (liveModeRef.current) {
+              setTimeout(() => { if (liveModeRef.current) startLiveSTT(); }, 200);
+            }
             break;
         }
       },
@@ -973,20 +994,13 @@ export default function MeetingRoom() {
             setIsSending(false);
             isSendingRef.current = false;
             setStreamingMessages([]);
+            abortControllerRef.current = null;
             queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
 
             if (liveModeRef.current) {
-              const resumeSTT = () => {
-                setLiveSpeaker(null);
-                setTimeout(() => {
-                  if (liveModeRef.current) startLiveSTT();
-                }, 500);
-              };
-              if (mainTTS.isSpeaking) {
-                mainTTS.setOnQueueDone(resumeSTT);
-              } else {
-                resumeSTT();
-              }
+              setTimeout(() => {
+                if (liveModeRef.current) startLiveSTT();
+              }, 200);
             }
             break;
         }
