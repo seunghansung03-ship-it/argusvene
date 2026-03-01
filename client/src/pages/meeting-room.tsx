@@ -16,8 +16,9 @@ import {
   ArrowLeft, Send, FileText, CheckCircle2, ListTodo,
   Loader2, User, Sparkles, StopCircle, Brain,
   Activity, Clock, FileCode, Eye, Mic, MicOff,
-  AlertTriangle, Zap,
+  AlertTriangle, Zap, Volume2, VolumeX,
 } from "lucide-react";
+import { useTTS } from "@/hooks/use-tts";
 import type { Meeting, MeetingMessage, AgentPersona, Artifact, Decision, Task } from "@shared/schema";
 
 interface StreamingMessage {
@@ -55,6 +56,8 @@ function ChatPanel({
   isSending,
   meetingStatus,
   interruptMessage,
+  voiceMode,
+  onToggleVoiceMode,
 }: {
   messages: MeetingMessage[];
   streamingMessages: StreamingMessage[];
@@ -63,11 +66,14 @@ function ChatPanel({
   isSending: boolean;
   meetingStatus: string;
   interruptMessage: string | null;
+  voiceMode: boolean;
+  onToggleVoiceMode: () => void;
 }) {
   const [input, setInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const { speak, stop, isSpeaking } = useTTS();
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -123,6 +129,23 @@ function ChatPanel({
         <Badge variant="secondary" className="text-xs">
           {messages.length} messages
         </Badge>
+        <div className="ml-auto flex items-center gap-1">
+          {isSpeaking && (
+            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={stop} data-testid="button-stop-tts">
+              <VolumeX className="w-3.5 h-3.5 text-red-400" />
+            </Button>
+          )}
+          <Button
+            variant={voiceMode ? "default" : "ghost"}
+            size="sm"
+            className="h-6 px-2 text-[10px]"
+            onClick={onToggleVoiceMode}
+            data-testid="button-toggle-voice-mode"
+          >
+            <Volume2 className="w-3 h-3 mr-1" />
+            {voiceMode ? "Voice On" : "Voice Off"}
+          </Button>
+        </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
@@ -170,6 +193,18 @@ function ChatPanel({
                   <div className="text-sm text-foreground mt-1 whitespace-pre-wrap leading-relaxed">
                     {msg.content}
                   </div>
+                  {!isHuman && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-5 px-1.5 mt-1 text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => speak(msg.content)}
+                      data-testid={`button-speak-${msg.id}`}
+                    >
+                      <Volume2 className="w-2.5 h-2.5 mr-0.5" />
+                      Speak
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
@@ -386,6 +421,9 @@ export default function MeetingRoom() {
   const [counterfactuals, setCounterfactuals] = useState<Counterfactual[]>([]);
   const [isWorldStateUpdating, setIsWorldStateUpdating] = useState(false);
   const [interruptMessage, setInterruptMessage] = useState<string | null>(null);
+  const [voiceMode, setVoiceMode] = useState(false);
+  const ttsQueueRef = useRef<string[]>([]);
+  const mainTTS = useTTS();
 
   const { data: meeting, isLoading: meetingLoading } = useQuery<Meeting>({
     queryKey: ["/api/meetings", meetingId],
@@ -449,13 +487,17 @@ export default function MeetingRoom() {
             );
             break;
           case "agent_done":
-            setStreamingMessages(prev =>
-              prev.map(sm =>
+            setStreamingMessages(prev => {
+              const msg = prev.find(sm => sm.agentId === data.agentId);
+              if (msg && voiceMode) {
+                ttsQueueRef.current.push(`${msg.agentName} says: ${msg.content}`);
+              }
+              return prev.map(sm =>
                 sm.agentId === data.agentId
                   ? { ...sm, isComplete: true }
                   : sm
-              )
-            );
+              );
+            });
             setStreamingAgentId(null);
             setWorkflowStatus(prev => [...prev, `${data.data?.senderName} finished`]);
             break;
@@ -473,6 +515,9 @@ export default function MeetingRoom() {
           case "interrupt":
             if (data.action?.interruptReason) {
               setInterruptMessage(data.action.interruptReason);
+              if (voiceMode) {
+                ttsQueueRef.current.push(`Co-founder interrupts: ${data.action.interruptReason}`);
+              }
             }
             setWorkflowStatus(prev => [...prev, "co-founder INTERRUPTED"]);
             break;
@@ -486,6 +531,11 @@ export default function MeetingRoom() {
             setIsSending(false);
             setStreamingMessages([]);
             queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
+            if (voiceMode && ttsQueueRef.current.length > 0) {
+              const combinedText = ttsQueueRef.current.join(". ");
+              ttsQueueRef.current = [];
+              mainTTS.speak(combinedText);
+            }
             break;
         }
       },
@@ -610,6 +660,12 @@ export default function MeetingRoom() {
             isSending={isSending}
             meetingStatus={meeting.status}
             interruptMessage={interruptMessage}
+            voiceMode={voiceMode}
+            onToggleVoiceMode={() => {
+              const next = !voiceMode;
+              setVoiceMode(next);
+              if (!next) mainTTS.stop();
+            }}
           />
         </div>
 
