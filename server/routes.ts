@@ -1,9 +1,15 @@
 import type { Express } from "express";
+import express from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertWorkspaceSchema, insertMeetingSchema } from "@shared/schema";
+import { insertWorkspaceSchema } from "@shared/schema";
 import { z } from "zod";
 import { getAIClient, getAvailableProviders, getDefaultProvider, setDefaultProvider, type AIProvider, type ChatMessage } from "./ai-provider";
+import { compileWorldState, generateMermaidDecisionTree, generateScenarioComparison } from "./world-compiler";
+import { evaluateParticipation, formatInterruptMessage } from "./ai-participant";
+import { createEmptyWorldState, type WorldState } from "../shared/types/worldstate";
+
+const audioBodyParser = express.json({ limit: "50mb" });
 
 const messageBodySchema = z.object({
   content: z.string().min(1),
@@ -117,16 +123,18 @@ export async function registerRoutes(
     const bodySchema = z.object({
       title: z.string().min(1),
       agentIds: z.array(z.number()).default([]),
-      aiProvider: z.enum(["openai", "gemini"]).default("openai"),
+      aiProvider: z.enum(["openai", "gemini"]).default("gemini"),
     });
     const parsed = bodySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
 
     try {
+      const sessionId = `session-${Date.now()}`;
       const meeting = await storage.createMeeting({
         ...parsed.data,
         workspaceId: parseInt(req.params.wsId),
         status: "active",
+        worldState: createEmptyWorldState(sessionId),
       });
       res.status(201).json(meeting);
     } catch (e) {
@@ -155,6 +163,20 @@ export async function registerRoutes(
     } catch (e) {
       console.error("Error fetching messages:", e);
       res.status(500).json({ error: "Failed to fetch messages" });
+    }
+  });
+
+  app.get("/api/meetings/:id/worldstate", async (req, res) => {
+    try {
+      const meeting = await storage.getMeeting(parseInt(req.params.id));
+      if (!meeting) return res.status(404).json({ error: "Not found" });
+      const ws = (meeting.worldState as WorldState) || createEmptyWorldState(`session-${meeting.id}`);
+      const mermaid = generateMermaidDecisionTree(ws);
+      const comparison = generateScenarioComparison(ws);
+      res.json({ worldState: ws, mermaid, comparison });
+    } catch (e) {
+      console.error("Error fetching worldstate:", e);
+      res.status(500).json({ error: "Failed to fetch world state" });
     }
   });
 
@@ -190,7 +212,7 @@ export async function registerRoutes(
         return;
       }
 
-      const provider = (meeting.aiProvider || "openai") as AIProvider;
+      const provider = (meeting.aiProvider || "gemini") as AIProvider;
       const aiClient = getAIClient(provider);
 
       const agentIds = (meeting.agentIds as number[]) || [];
@@ -210,7 +232,7 @@ export async function registerRoutes(
 
           const systemMsg: ChatMessage = {
             role: "system",
-            content: `${agent.systemPrompt}\n\nYou are ${agent.name}, the ${agent.role}. Respond concisely and in-character. Keep responses focused and under 300 words unless a detailed analysis is required.`,
+            content: `${agent.systemPrompt}\n\nYou are ${agent.name}, the ${agent.role}. You are a co-founder AI participant in a live strategy meeting. Respond concisely and in-character. Challenge assumptions, propose alternatives, and think critically. Keep responses focused and under 300 words unless a detailed analysis is required.`,
           };
 
           let fullResponse = "";
@@ -247,6 +269,72 @@ export async function registerRoutes(
       }
 
       if (!aborted) {
+        try {
+          const currentWorldState = (meeting.worldState as WorldState) || createEmptyWorldState(`session-${meetingId}`);
+          const transcript = previousMessages.slice(-6).map(m => `[${m.senderName}]: ${m.content}`).join("\n");
+
+          res.write(`data: ${JSON.stringify({ type: "worldstate_updating" })}\n\n`);
+
+          const [updatedWorldState, participantAction] = await Promise.all([
+            compileWorldState(currentWorldState, transcript, currentWorldState.sessionId),
+            evaluateParticipation(currentWorldState, transcript),
+          ]);
+
+          if (participantAction.counterfactuals && participantAction.counterfactuals.length > 0) {
+            const cfScenarios = participantAction.counterfactuals.map((cf: any, i: number) => ({
+              id: cf.id || `cf-${Date.now()}-${i}`,
+              label: cf.scenario,
+              type: "alternative" as const,
+              optionId: "",
+              metrics: { risk: 50 },
+              description: `${cf.description} — Impact: ${cf.impact}`,
+            }));
+            updatedWorldState.scenarios = [
+              ...updatedWorldState.scenarios.filter((s: any) => !s.id.startsWith("cf-")),
+              ...cfScenarios,
+            ];
+          }
+
+          await storage.updateMeetingWorldState(meetingId, updatedWorldState);
+
+          const mermaid = generateMermaidDecisionTree(updatedWorldState);
+          const comparison = generateScenarioComparison(updatedWorldState);
+
+          res.write(`data: ${JSON.stringify({
+            type: "worldstate_updated",
+            worldState: updatedWorldState,
+            mermaid,
+            comparison,
+          })}\n\n`);
+
+          if (participantAction.interrupt) {
+            const interruptMsg = formatInterruptMessage(participantAction);
+            const savedInterrupt = await storage.createMeetingMessage({
+              meetingId,
+              senderType: "agent",
+              senderName: "co-founder",
+              content: interruptMsg,
+            });
+
+            res.write(`data: ${JSON.stringify({
+              type: "interrupt",
+              action: participantAction,
+              message: savedInterrupt,
+            })}\n\n`);
+          }
+
+          if (participantAction.counterfactuals.length > 0) {
+            res.write(`data: ${JSON.stringify({
+              type: "counterfactuals",
+              counterfactuals: participantAction.counterfactuals,
+            })}\n\n`);
+          }
+        } catch (wsError) {
+          console.error("WorldState/Participant error:", wsError);
+        }
+      }
+
+      if (!aborted) {
         res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
         res.end();
       }
@@ -256,6 +344,49 @@ export async function registerRoutes(
         res.status(500).json({ error: "Failed to process message" });
       } else if (!aborted) {
         res.write(`data: ${JSON.stringify({ type: "error", error: "Internal error" })}\n\n`);
+        res.end();
+      }
+    }
+  });
+
+  app.post("/api/meetings/:id/voice", audioBodyParser, async (req, res) => {
+    const meetingId = parseInt(req.params.id);
+    const { audio } = req.body;
+
+    if (!audio) {
+      return res.status(400).json({ error: "Audio data required" });
+    }
+
+    let aborted = false;
+    res.on("close", () => { aborted = true; });
+
+    try {
+      const meeting = await storage.getMeeting(meetingId);
+      if (!meeting) return res.status(404).json({ error: "Not found" });
+
+      const aiClient = getAIClient("gemini");
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      const transcriptResult = await aiClient.chat([
+        { role: "system", content: "You are a speech-to-text transcription assistant. The user will provide audio content description. Transcribe or summarize what was said. Output only the transcription text, nothing else." },
+        { role: "user", content: "Audio content received. Please acknowledge and indicate the meeting participant spoke." },
+      ], 200);
+
+      res.write(`data: ${JSON.stringify({ type: "transcript", text: transcriptResult })}\n\n`);
+
+      if (!aborted) {
+        res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+        res.end();
+      }
+    } catch (error) {
+      console.error("Voice processing error:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to process voice" });
+      } else {
+        res.write(`data: ${JSON.stringify({ type: "error", error: "Voice processing failed" })}\n\n`);
         res.end();
       }
     }
@@ -273,10 +404,11 @@ export async function registerRoutes(
       const messages = await storage.getMeetingMessages(meetingId);
       if (messages.length === 0) return res.status(400).json({ error: "No messages to summarize" });
 
-      const provider = (meeting.aiProvider || "openai") as AIProvider;
+      const provider = (meeting.aiProvider || "gemini") as AIProvider;
       const aiClient = getAIClient(provider);
 
       const transcript = messages.map(m => `[${m.senderName}]: ${m.content}`).join("\n\n");
+      const worldState = meeting.worldState as WorldState | null;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -285,19 +417,14 @@ export async function registerRoutes(
       const resultText = await aiClient.chatJSON([
         {
           role: "system",
-          content: `You are the Consensus Engine for ArgusVene. Analyze the meeting transcript and produce a structured JSON output with:
-1. "artifacts" - Array of generated documents. Each has: "type" (one of: "architecture_doc", "prd", "technical_spec", "meeting_notes"), "title", "content" (detailed markdown).
-2. "decisions" - Array of decisions made. Each has: "title", "description".
+          content: `You are the Consensus Engine for co-founder. Analyze the meeting transcript and WorldState to produce a structured JSON output with:
+1. "artifacts" - Array of generated documents. Each has: "type" (one of: "architecture_doc", "prd", "technical_spec", "meeting_notes", "decision_brief"), "title", "content" (detailed markdown).
+2. "decisions" - Array of decisions made. Each has: "title", "description", "premises" (array of reasoning points), "rejectedAlternatives" (array of alternatives not chosen with reasons).
 3. "tasks" - Array of action items. Each has: "title", "description", "assignee" (agent name or "Unassigned"), "executionType" (one of: "manual", "ai_draft", "ai_research").
 
-For executionType:
-- "manual" = requires human action
-- "ai_draft" = AI can generate a draft document/code/plan for this
-- "ai_research" = AI can research and compile information for this
-
-Be thorough and extract every actionable item. Output ONLY valid JSON.`
+Include WorldState context in your analysis. Be thorough and extract every actionable item. Output ONLY valid JSON.`
         },
-        { role: "user", content: `Meeting: "${meeting.title}"\n\nTranscript:\n${transcript}` }
+        { role: "user", content: `Meeting: "${meeting.title}"\n\nWorldState:\n${worldState ? JSON.stringify(worldState, null, 2) : "No WorldState"}\n\nTranscript:\n${transcript}` }
       ]);
 
       if (aborted) return;
@@ -372,13 +499,9 @@ Be thorough and extract every actionable item. Output ONLY valid JSON.`
     try {
       const task = await storage.getTask(taskId);
       if (!task) return res.status(404).json({ error: "Task not found" });
+      if (task.executionType === "manual") return res.status(400).json({ error: "Manual tasks cannot be executed by AI" });
 
-      if (task.executionType === "manual") {
-        return res.status(400).json({ error: "Manual tasks cannot be executed by AI" });
-      }
-
-      const providerParam = req.body?.provider as AIProvider | undefined;
-      const aiClient = getAIClient(providerParam);
+      const aiClient = getAIClient("gemini");
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -386,18 +509,15 @@ Be thorough and extract every actionable item. Output ONLY valid JSON.`
 
       res.write(`data: ${JSON.stringify({ type: "start", taskId: task.id, executionType: task.executionType })}\n\n`);
 
-      let systemPrompt = "";
-      if (task.executionType === "ai_draft") {
-        systemPrompt = `You are OpenClaw, the autonomous execution runtime for ArgusVene. Your job is to produce a complete, high-quality draft based on the task description. Output detailed, actionable content in markdown format. Include specifics like code snippets, architecture diagrams in mermaid, timelines, or whatever is appropriate for the task.`;
-      } else if (task.executionType === "ai_research") {
-        systemPrompt = `You are OpenClaw, the autonomous execution runtime for ArgusVene. Your job is to research and compile comprehensive information based on the task description. Provide structured research findings, comparisons, recommendations, and citations where relevant. Output in markdown format.`;
-      }
+      let systemPrompt = task.executionType === "ai_draft"
+        ? `You are OpenClaw, the autonomous execution runtime for co-founder. Produce a complete, high-quality draft based on the task description. Output detailed, actionable content in markdown format.`
+        : `You are OpenClaw, the autonomous execution runtime for co-founder. Research and compile comprehensive information based on the task description. Provide structured findings and recommendations in markdown format.`;
 
       let fullResult = "";
 
       for await (const chunk of aiClient.chatStream([
         { role: "system", content: systemPrompt },
-        { role: "user", content: `Task: ${task.title}\n\nDescription: ${task.description || "No additional details provided."}\n\nAssigned to: ${task.assignee || "Unassigned"}\n\nPlease produce a comprehensive output for this task.` },
+        { role: "user", content: `Task: ${task.title}\n\nDescription: ${task.description || "No additional details."}\n\nAssigned to: ${task.assignee || "Unassigned"}` },
       ])) {
         if (aborted) break;
         if (chunk.content) {
@@ -478,6 +598,78 @@ Be thorough and extract every actionable item. Output ONLY valid JSON.`
     }
   });
 
+  app.get("/api/meetings/:id/decision-memory", async (req, res) => {
+    try {
+      const meeting = await storage.getMeeting(parseInt(req.params.id));
+      if (!meeting) return res.status(404).json({ error: "Not found" });
+
+      const messages = await storage.getMeetingMessages(parseInt(req.params.id));
+      const worldState = (meeting.worldState as WorldState) || createEmptyWorldState(`session-${meeting.id}`);
+
+      const decisionMemory = {
+        meetingId: meeting.id,
+        title: meeting.title,
+        status: meeting.status,
+        aiProvider: meeting.aiProvider,
+        createdAt: meeting.createdAt,
+        endedAt: meeting.endedAt,
+        worldState: {
+          sessionId: worldState.sessionId,
+          version: worldState.version,
+          entities: worldState.entities,
+          assumptions: worldState.assumptions,
+          constraints: worldState.constraints,
+          options: worldState.options,
+          scenarios: worldState.scenarios,
+          metrics: worldState.metrics,
+          decisions: worldState.decisions,
+          lastUpdated: worldState.lastUpdated,
+        },
+        transcript: messages.map(m => ({
+          speaker: m.senderName,
+          type: m.senderType,
+          content: m.content,
+          timestamp: m.createdAt,
+        })),
+        messageCount: messages.length,
+      };
+
+      res.json(decisionMemory);
+    } catch (e) {
+      console.error("Error fetching decision memory:", e);
+      res.status(500).json({ error: "Failed to fetch decision memory" });
+    }
+  });
+
+  app.get("/api/workspaces/:wsId/decision-memory", async (req, res) => {
+    try {
+      const meetings = await storage.getMeetings(parseInt(req.params.wsId));
+      const memories = [];
+
+      for (const meeting of meetings) {
+        const worldState = (meeting.worldState as WorldState) || null;
+        if (!worldState) continue;
+
+        memories.push({
+          meetingId: meeting.id,
+          title: meeting.title,
+          status: meeting.status,
+          createdAt: meeting.createdAt,
+          worldStateVersion: worldState.version,
+          decisions: worldState.decisions || [],
+          assumptions: worldState.assumptions || [],
+          options: worldState.options || [],
+          scenarios: worldState.scenarios || [],
+        });
+      }
+
+      res.json(memories);
+    } catch (e) {
+      console.error("Error fetching workspace decision memory:", e);
+      res.status(500).json({ error: "Failed to fetch decision memory" });
+    }
+  });
+
   app.post("/api/quick-chat", async (req, res) => {
     const parsed = quickChatSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
@@ -490,11 +682,11 @@ Be thorough and extract every actionable item. Output ONLY valid JSON.`
     res.setHeader("Connection", "keep-alive");
 
     try {
-      const provider = parsed.data.provider as AIProvider | undefined;
+      const provider = (parsed.data.provider || "gemini") as AIProvider;
       const aiClient = getAIClient(provider);
 
       const chatMessages: ChatMessage[] = [
-        { role: "system", content: "You are ArgusVene, an AI Co-founder assistant. You help founders and executives with strategic thinking, technical decisions, and business planning. Be concise, insightful, and actionable." },
+        { role: "system", content: "You are co-founder, an AI Co-founder assistant. You help founders and executives with strategic thinking, technical decisions, and business planning. Be concise, insightful, and actionable. Always challenge assumptions and propose alternatives." },
         ...(parsed.data.history || []).map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
         { role: "user", content: parsed.data.message },
       ];

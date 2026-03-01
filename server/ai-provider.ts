@@ -146,7 +146,7 @@ const clients: Record<AIProvider, AIClient> = {
   gemini: createGeminiClient(),
 };
 
-let defaultProvider: AIProvider = "openai";
+let defaultProvider: AIProvider = "gemini";
 
 export function setDefaultProvider(provider: AIProvider) {
   defaultProvider = provider;

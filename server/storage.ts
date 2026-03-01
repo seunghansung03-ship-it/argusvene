@@ -29,6 +29,7 @@ export interface IStorage {
   getMeeting(id: number): Promise<Meeting | undefined>;
   createMeeting(meeting: InsertMeeting): Promise<Meeting>;
   updateMeetingStatus(id: number, status: string): Promise<Meeting | undefined>;
+  updateMeetingWorldState(id: number, worldState: any): Promise<Meeting | undefined>;
 
   getMeetingMessages(meetingId: number): Promise<MeetingMessage[]>;
   createMeetingMessage(msg: InsertMeetingMessage): Promise<MeetingMessage>;
@@ -101,6 +102,10 @@ export class DatabaseStorage implements IStorage {
   }
   async updateMeetingStatus(id: number, status: string) {
     const [updated] = await db.update(meetings).set({ status, endedAt: status === "ended" ? new Date() : undefined }).where(eq(meetings.id, id)).returning();
+    return updated;
+  }
+  async updateMeetingWorldState(id: number, worldState: any) {
+    const [updated] = await db.update(meetings).set({ worldState }).where(eq(meetings.id, id)).returning();
     return updated;
   }
 

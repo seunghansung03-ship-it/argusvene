@@ -19,7 +19,8 @@ import {
   ArrowLeft, Plus, MessageSquare, FileText, CheckCircle2, ListTodo,
   Clock, Circle, CheckCircle, AlertCircle, Users, Sparkles,
   Rocket, FlaskConical, TrendingUp, Briefcase, Play, Loader2,
-  Bot, Zap, Eye, FileCode,
+  Bot, Zap, Eye, FileCode, Brain, Download, Shield, GitBranch,
+  ChevronDown, ChevronRight, Target,
 } from "lucide-react";
 import type { Workspace, Meeting, AgentPersona, Artifact, Decision, Task } from "@shared/schema";
 
@@ -478,6 +479,189 @@ function TasksTab({ workspaceId }: { workspaceId: number }) {
   );
 }
 
+interface DecisionMemoryEntry {
+  meetingId: number;
+  title: string;
+  status: string;
+  createdAt: string;
+  worldStateVersion: number;
+  decisions: { id: string; title: string; chosenOptionId: string; reasoning: string; rejectedOptions: { optionId: string; reason: string }[]; premises: string[]; timestamp: string }[];
+  assumptions: { id: string; text: string; basis: string; confidence: number; challengedBy: string | null; status: string }[];
+  options: { id: string; title: string; description: string; pros: string[]; cons: string[] }[];
+  scenarios: { id: string; label: string; type: string; optionId: string; metrics: Record<string, any>; description: string }[];
+}
+
+function DecisionMemoryTab({ workspaceId }: { workspaceId: number }) {
+  const { toast } = useToast();
+  const [expandedMeeting, setExpandedMeeting] = useState<number | null>(null);
+
+  const { data: memories, isLoading } = useQuery<DecisionMemoryEntry[]>({
+    queryKey: ["/api/workspaces", workspaceId, "decision-memory"],
+    queryFn: () => fetch(`/api/workspaces/${workspaceId}/decision-memory`).then(r => r.json()),
+  });
+
+  const handleExport = async (meetingId: number) => {
+    try {
+      const response = await fetch(`/api/meetings/${meetingId}/decision-memory`);
+      const data = await response.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `decision-memory-${meetingId}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "Exported", description: "Decision memory downloaded as JSON." });
+    } catch {
+      toast({ title: "Export failed", variant: "destructive" });
+    }
+  };
+
+  if (isLoading) return <div className="space-y-3">{[1, 2].map(i => <Skeleton key={i} className="h-20 rounded-md" />)}</div>;
+
+  if (!memories || memories.length === 0) {
+    return (
+      <Card className="p-8 text-center border-card-border">
+        <Brain className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+        <p className="text-muted-foreground">No decision memory recorded yet.</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Start a meeting and discuss strategic options. The AI will track decisions, assumptions, and alternatives.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {memories.map(mem => {
+        const isExpanded = expandedMeeting === mem.meetingId;
+        const hasDecisions = mem.decisions.length > 0;
+        const hasAssumptions = mem.assumptions.length > 0;
+
+        return (
+          <Card key={mem.meetingId} className="border-card-border overflow-hidden" data-testid={`memory-meeting-${mem.meetingId}`}>
+            <div
+              className="p-4 flex items-center gap-3 cursor-pointer"
+              onClick={() => setExpandedMeeting(isExpanded ? null : mem.meetingId)}
+              data-testid={`button-expand-memory-${mem.meetingId}`}
+            >
+              {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />}
+              <Brain className="w-5 h-5 text-primary flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-foreground">{mem.title}</p>
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <Badge variant="secondary" className="text-[10px]">
+                    WorldState v{mem.worldStateVersion}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {mem.decisions.length} decisions - {mem.assumptions.length} assumptions - {mem.options.length} options
+                  </span>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); handleExport(mem.meetingId); }}
+                data-testid={`button-export-memory-${mem.meetingId}`}
+              >
+                <Download className="w-3.5 h-3.5 mr-1" />
+                Export
+              </Button>
+            </div>
+
+            {isExpanded && (
+              <div className="border-t border-border">
+                {hasDecisions && (
+                  <div className="p-4">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
+                      <GitBranch className="w-3.5 h-3.5" />
+                      Decisions Made
+                    </h4>
+                    <div className="space-y-3">
+                      {mem.decisions.map((d, i) => (
+                        <Card key={i} className="p-3 bg-green-500/5 border-green-500/20" data-testid={`decision-detail-${i}`}>
+                          <p className="text-sm font-semibold text-foreground">{d.title}</p>
+                          {d.reasoning && (
+                            <p className="text-xs text-muted-foreground mt-1">{d.reasoning}</p>
+                          )}
+                          {d.premises && d.premises.length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Premises</p>
+                              <ul className="space-y-0.5">
+                                {d.premises.map((p, j) => (
+                                  <li key={j} className="text-xs text-muted-foreground flex items-start gap-1.5">
+                                    <span className="text-green-500 mt-0.5">-</span>
+                                    {p}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          {d.rejectedOptions && d.rejectedOptions.length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-[10px] uppercase tracking-wider text-red-400 mb-1">Rejected Alternatives</p>
+                              {d.rejectedOptions.map((ro, j) => (
+                                <div key={j} className="text-xs text-muted-foreground flex items-start gap-1.5">
+                                  <span className="text-red-400 mt-0.5">x</span>
+                                  <span><span className="font-medium">{ro.optionId}</span>: {ro.reason}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {hasAssumptions && (
+                  <div className="p-4 border-t border-border">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5" />
+                      Assumption Log
+                    </h4>
+                    <div className="space-y-2">
+                      {mem.assumptions.map((a, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs" data-testid={`assumption-log-${i}`}>
+                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                            a.status === "confirmed" ? "bg-green-500" :
+                            a.status === "challenged" ? "bg-yellow-500" :
+                            a.status === "invalidated" ? "bg-red-500" : "bg-blue-500"
+                          }`} />
+                          <span className="text-foreground flex-1">{a.text}</span>
+                          <span className="text-muted-foreground font-mono">{a.confidence}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {mem.scenarios.length > 0 && (
+                  <div className="p-4 border-t border-border">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
+                      <Target className="w-3.5 h-3.5" />
+                      Scenario Analysis
+                    </h4>
+                    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(mem.scenarios.length, 3)}, 1fr)` }}>
+                      {mem.scenarios.map((s, i) => (
+                        <Card key={i} className="p-2.5 text-xs" data-testid={`scenario-memory-${i}`}>
+                          <Badge variant="outline" className="text-[10px] mb-1">{s.type}</Badge>
+                          <p className="font-medium text-foreground">{s.label}</p>
+                          <p className="text-muted-foreground mt-0.5 line-clamp-2">{s.description}</p>
+                        </Card>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function WorkspacePage() {
   const params = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
@@ -553,6 +737,10 @@ export default function WorkspacePage() {
               <ListTodo className="w-4 h-4 mr-1.5" />
               Tasks
             </TabsTrigger>
+            <TabsTrigger value="memory" data-testid="tab-memory">
+              <Brain className="w-4 h-4 mr-1.5" />
+              Decision Memory
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="meetings">
@@ -566,6 +754,9 @@ export default function WorkspacePage() {
           </TabsContent>
           <TabsContent value="tasks">
             <TasksTab workspaceId={workspaceId} />
+          </TabsContent>
+          <TabsContent value="memory">
+            <DecisionMemoryTab workspaceId={workspaceId} />
           </TabsContent>
         </Tabs>
       </div>

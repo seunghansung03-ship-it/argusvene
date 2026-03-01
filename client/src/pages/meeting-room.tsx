@@ -7,15 +7,16 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { AgentAvatar } from "@/components/agent-avatar";
+import LiveCanvas from "@/components/live-canvas";
 import {
   ArrowLeft, Send, FileText, CheckCircle2, ListTodo,
   Loader2, User, Sparkles, StopCircle, Brain,
-  Activity, Clock, FileCode, Eye,
+  Activity, Clock, FileCode, Eye, Mic, MicOff,
+  AlertTriangle, Zap,
 } from "lucide-react";
 import type { Meeting, MeetingMessage, AgentPersona, Artifact, Decision, Task } from "@shared/schema";
 
@@ -26,6 +27,26 @@ interface StreamingMessage {
   isComplete: boolean;
 }
 
+interface WorldStateData {
+  sessionId: string;
+  version: number;
+  entities: any[];
+  assumptions: any[];
+  constraints: any[];
+  options: any[];
+  scenarios: any[];
+  metrics: any[];
+  decisions: any[];
+  lastUpdated: string;
+}
+
+interface Counterfactual {
+  id: string;
+  scenario: string;
+  description: string;
+  impact: string;
+}
+
 function ChatPanel({
   messages,
   streamingMessages,
@@ -33,6 +54,7 @@ function ChatPanel({
   onSend,
   isSending,
   meetingStatus,
+  interruptMessage,
 }: {
   messages: MeetingMessage[];
   streamingMessages: StreamingMessage[];
@@ -40,9 +62,12 @@ function ChatPanel({
   onSend: (msg: string) => void;
   isSending: boolean;
   meetingStatus: string;
+  interruptMessage: string | null;
 }) {
   const [input, setInput] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -56,12 +81,45 @@ function ChatPanel({
     setInput("");
   };
 
+  const toggleVoice = () => {
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+
+    recognition.onresult = (event: any) => {
+      let transcript = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          setInput(prev => prev + " " + transcript.trim());
+          transcript = "";
+        }
+      }
+    };
+
+    recognition.onerror = () => setIsRecording(false);
+    recognition.onend = () => setIsRecording(false);
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsRecording(true);
+  };
+
   const agentMap = new Map(agents.map(a => [a.id, a]));
 
   return (
     <div className="flex flex-col h-full">
       <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-        <span className="font-semibold text-sm text-foreground">Discussion</span>
+        <span className="font-semibold text-sm text-foreground">Transcript</span>
         <Badge variant="secondary" className="text-xs">
           {messages.length} messages
         </Badge>
@@ -71,6 +129,7 @@ function ChatPanel({
         {messages.map((msg) => {
           const agent = msg.agentId ? agentMap.get(msg.agentId) : null;
           const isHuman = msg.senderType === "human";
+          const isCofounder = msg.senderName === "co-founder";
 
           return (
             <div key={msg.id} className="group" data-testid={`message-${msg.id}`}>
@@ -78,6 +137,10 @@ function ChatPanel({
                 {isHuman ? (
                   <div className="w-7 h-7 rounded-md bg-secondary flex items-center justify-center flex-shrink-0">
                     <User className="w-3.5 h-3.5 text-secondary-foreground" />
+                  </div>
+                ) : isCofounder ? (
+                  <div className="w-7 h-7 rounded-md bg-yellow-500/20 flex items-center justify-center flex-shrink-0">
+                    <Zap className="w-3.5 h-3.5 text-yellow-500" />
                   </div>
                 ) : (
                   <AgentAvatar
@@ -89,9 +152,16 @@ function ChatPanel({
                 )}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline gap-2 flex-wrap">
-                    <span className="text-sm font-semibold text-foreground">{msg.senderName}</span>
+                    <span className={`text-sm font-semibold ${isCofounder ? "text-yellow-500" : "text-foreground"}`}>
+                      {msg.senderName}
+                    </span>
                     {agent && (
                       <span className="text-xs text-muted-foreground">{agent.role}</span>
+                    )}
+                    {isCofounder && (
+                      <Badge variant="outline" className="text-[10px] px-1 py-0 border-yellow-500/30 text-yellow-500">
+                        INTERRUPT
+                      </Badge>
                     )}
                     <span className="text-xs text-muted-foreground">
                       {new Date(msg.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
@@ -134,6 +204,16 @@ function ChatPanel({
           );
         })}
 
+        {interruptMessage && (
+          <Card className="p-3 border-yellow-500/30 bg-yellow-500/5 animate-in slide-in-from-left">
+            <div className="flex items-center gap-2 mb-1">
+              <AlertTriangle className="w-4 h-4 text-yellow-500" />
+              <span className="text-sm font-semibold text-yellow-500">co-founder Interrupt</span>
+            </div>
+            <p className="text-sm text-foreground whitespace-pre-wrap">{interruptMessage}</p>
+          </Card>
+        )}
+
         {isSending && streamingMessages.length === 0 && (
           <div className="flex items-center gap-2 text-muted-foreground text-sm">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -145,9 +225,18 @@ function ChatPanel({
       {meetingStatus === "active" && (
         <div className="p-3 border-t border-border">
           <div className="flex gap-2">
+            <Button
+              variant={isRecording ? "destructive" : "outline"}
+              size="icon"
+              onClick={toggleVoice}
+              data-testid="button-voice-toggle"
+              className="flex-shrink-0"
+            >
+              {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </Button>
             <Textarea
               data-testid="input-meeting-message"
-              placeholder="Type your message..."
+              placeholder={isRecording ? "Listening... speak now" : "Type your message..."}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => {
@@ -168,160 +257,14 @@ function ChatPanel({
               <Send className="w-4 h-4" />
             </Button>
           </div>
+          {isRecording && (
+            <div className="flex items-center gap-2 mt-2 text-sm text-red-400">
+              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              <span>Recording... click mic to stop</span>
+            </div>
+          )}
         </div>
       )}
-    </div>
-  );
-}
-
-function CenterStage({
-  artifacts,
-  decisions,
-  tasks,
-  isSummarizing,
-  summaryArtifacts,
-  summaryDecisions,
-  summaryTasks,
-}: {
-  artifacts: Artifact[];
-  decisions: Decision[];
-  tasks: Task[];
-  isSummarizing: boolean;
-  summaryArtifacts: Artifact[];
-  summaryDecisions: Decision[];
-  summaryTasks: Task[];
-}) {
-  const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null);
-  const allArtifacts = [...summaryArtifacts, ...artifacts];
-  const allDecisions = [...summaryDecisions, ...decisions];
-  const allTasks = [...summaryTasks, ...tasks];
-
-  if (isSummarizing) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-4">
-        <div className="relative">
-          <div className="w-16 h-16 rounded-full border-2 border-primary/30 flex items-center justify-center">
-            <Brain className="w-8 h-8 text-primary animate-pulse" />
-          </div>
-          <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-        </div>
-        <div className="text-center">
-          <p className="font-semibold text-foreground">Consensus Engine Active</p>
-          <p className="text-sm text-muted-foreground mt-1">Analyzing transcript and generating artifacts...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (selectedArtifact) {
-    return (
-      <div className="h-full flex flex-col">
-        <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-          <Button data-testid="button-back-stage" variant="ghost" size="sm" onClick={() => setSelectedArtifact(null)}>
-            <ArrowLeft className="w-4 h-4 mr-1" />
-            Back
-          </Button>
-          <Badge variant="secondary">{selectedArtifact.type.replace(/_/g, " ")}</Badge>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6">
-          <h2 className="text-xl font-bold text-foreground mb-4" data-testid="text-stage-artifact-title">
-            {selectedArtifact.title}
-          </h2>
-          <div className="prose prose-sm dark:prose-invert max-w-none">
-            {selectedArtifact.content.split("\n").map((line, i) => (
-              <p key={i}>{line}</p>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const hasContent = allArtifacts.length > 0 || allDecisions.length > 0 || allTasks.length > 0;
-
-  if (!hasContent) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-center px-6">
-        <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-          <Sparkles className="w-8 h-8 text-muted-foreground" />
-        </div>
-        <h3 className="text-lg font-semibold text-foreground mb-2">Center Stage</h3>
-        <p className="text-sm text-muted-foreground max-w-md">
-          Generated documents, decisions, and structured content will appear here as the discussion progresses. End the meeting to activate the Consensus Engine.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="h-full flex flex-col">
-      <div className="px-4 py-3 border-b border-border">
-        <span className="font-semibold text-sm text-foreground">Generated Outputs</span>
-      </div>
-      <div className="flex-1 overflow-y-auto p-4 space-y-6">
-        {allArtifacts.length > 0 && (
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
-              <FileText className="w-3.5 h-3.5" />
-              Documents
-            </h4>
-            <div className="space-y-2">
-              {allArtifacts.map(a => (
-                <Card
-                  key={a.id}
-                  className="p-3 cursor-pointer hover-elevate border-card-border"
-                  onClick={() => setSelectedArtifact(a)}
-                  data-testid={`stage-artifact-${a.id}`}
-                >
-                  <div className="flex items-center gap-2">
-                    <FileCode className="w-4 h-4 text-primary flex-shrink-0" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{a.title}</p>
-                      <p className="text-xs text-muted-foreground">{a.type.replace(/_/g, " ")}</p>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {allDecisions.length > 0 && (
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Decisions
-            </h4>
-            <div className="space-y-2">
-              {allDecisions.map(d => (
-                <Card key={d.id} className="p-3 border-card-border" data-testid={`stage-decision-${d.id}`}>
-                  <p className="text-sm font-medium text-foreground">{d.title}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{d.description}</p>
-                </Card>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {allTasks.length > 0 && (
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
-              <ListTodo className="w-3.5 h-3.5" />
-              Action Items
-            </h4>
-            <div className="space-y-2">
-              {allTasks.map(t => (
-                <Card key={t.id} className="p-3 border-card-border" data-testid={`stage-task-${t.id}`}>
-                  <p className="text-sm font-medium text-foreground">{t.title}</p>
-                  {t.assignee && (
-                    <p className="text-xs text-muted-foreground mt-1">Assigned to: {t.assignee}</p>
-                  )}
-                </Card>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -331,25 +274,37 @@ function RightPanel({
   agentIds,
   workflowStatus,
   streamingAgentId,
+  worldState,
 }: {
   agents: AgentPersona[];
   agentIds: number[];
   workflowStatus: string[];
   streamingAgentId: number | null;
+  worldState: WorldStateData | null;
 }) {
   const activeAgents = agents.filter(a => agentIds.includes(a.id));
 
   return (
     <div className="h-full flex flex-col">
       <div className="px-4 py-3 border-b border-border">
-        <span className="font-semibold text-sm text-foreground">Agents & Workflow</span>
+        <span className="font-semibold text-sm text-foreground">Agents & Status</span>
       </div>
       <div className="flex-1 overflow-y-auto">
         <div className="p-4">
           <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-            Active Agents
+            Active Participants
           </h4>
           <div className="space-y-2">
+            <div className="flex items-center gap-2.5 p-2 rounded-md bg-yellow-500/5 border border-yellow-500/20" data-testid="panel-cofounder">
+              <div className="w-7 h-7 rounded-md bg-yellow-500/20 flex items-center justify-center flex-shrink-0">
+                <Zap className="w-3.5 h-3.5 text-yellow-500" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">co-founder</p>
+                <p className="text-xs text-muted-foreground">AI Decision Participant</p>
+              </div>
+            </div>
+
             {activeAgents.map(agent => (
               <div key={agent.id} className="flex items-center gap-2.5 p-2 rounded-md" data-testid={`panel-agent-${agent.id}`}>
                 <AgentAvatar avatar={agent.avatar} color={agent.color} size="sm" name={agent.name} />
@@ -365,22 +320,37 @@ function RightPanel({
                 )}
               </div>
             ))}
-            {activeAgents.length === 0 && (
-              <p className="text-sm text-muted-foreground">No agents in this meeting</p>
-            )}
           </div>
         </div>
 
         <Separator />
 
+        {worldState && worldState.entities.length > 0 && (
+          <>
+            <div className="p-4">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                Entities Detected
+              </h4>
+              <div className="flex flex-wrap gap-1.5">
+                {worldState.entities.map((e, i) => (
+                  <Badge key={i} variant="secondary" className="text-[10px]" data-testid={`entity-${i}`}>
+                    {e.name}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+            <Separator />
+          </>
+        )}
+
         <div className="p-4">
           <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
             <Activity className="w-3.5 h-3.5" />
-            Workflow Status
+            Workflow
           </h4>
           <div className="space-y-2">
             {workflowStatus.length > 0 ? (
-              workflowStatus.map((status, i) => (
+              workflowStatus.slice(-8).map((status, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
                   <Clock className="w-3 h-3 mt-0.5 flex-shrink-0" />
                   <span>{status}</span>
@@ -410,6 +380,12 @@ export default function MeetingRoom() {
   const [summaryArtifacts, setSummaryArtifacts] = useState<Artifact[]>([]);
   const [summaryDecisions, setSummaryDecisions] = useState<Decision[]>([]);
   const [summaryTasks, setSummaryTasks] = useState<Task[]>([]);
+  const [worldState, setWorldState] = useState<WorldStateData | null>(null);
+  const [mermaidSpec, setMermaidSpec] = useState<string>("");
+  const [comparison, setComparison] = useState<{ scenarios: any[]; metricKeys: string[] } | null>(null);
+  const [counterfactuals, setCounterfactuals] = useState<Counterfactual[]>([]);
+  const [isWorldStateUpdating, setIsWorldStateUpdating] = useState(false);
+  const [interruptMessage, setInterruptMessage] = useState<string | null>(null);
 
   const { data: meeting, isLoading: meetingLoading } = useQuery<Meeting>({
     queryKey: ["/api/meetings", meetingId],
@@ -425,27 +401,29 @@ export default function MeetingRoom() {
     queryKey: ["/api/agents"],
   });
 
-  const { data: artifacts = [] } = useQuery<Artifact[]>({
-    queryKey: ["/api/workspaces", meeting?.workspaceId, "artifacts"],
-    queryFn: () => fetch(`/api/workspaces/${meeting?.workspaceId}/artifacts`).then(r => r.json()),
-    enabled: !!meeting?.workspaceId,
-  });
+  useEffect(() => {
+    if (meeting?.worldState) {
+      const ws = meeting.worldState as WorldStateData;
+      setWorldState(ws);
+    }
+  }, [meeting]);
 
-  const { data: decisions = [] } = useQuery<Decision[]>({
-    queryKey: ["/api/workspaces", meeting?.workspaceId, "decisions"],
-    queryFn: () => fetch(`/api/workspaces/${meeting?.workspaceId}/decisions`).then(r => r.json()),
-    enabled: !!meeting?.workspaceId,
-  });
-
-  const { data: tasks = [] } = useQuery<Task[]>({
-    queryKey: ["/api/workspaces", meeting?.workspaceId, "tasks"],
-    queryFn: () => fetch(`/api/workspaces/${meeting?.workspaceId}/tasks`).then(r => r.json()),
-    enabled: !!meeting?.workspaceId,
-  });
+  useEffect(() => {
+    if (!meetingId) return;
+    fetch(`/api/meetings/${meetingId}/worldstate`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.worldState) setWorldState(data.worldState);
+        if (data.mermaid) setMermaidSpec(data.mermaid);
+        if (data.comparison) setComparison(data.comparison);
+      })
+      .catch(() => {});
+  }, [meetingId]);
 
   const handleSendMessage = useCallback(async (content: string) => {
     setIsSending(true);
     setStreamingMessages([]);
+    setInterruptMessage(null);
     setWorkflowStatus(prev => [...prev, `User message sent`]);
 
     await streamChat(
@@ -480,6 +458,29 @@ export default function MeetingRoom() {
             );
             setStreamingAgentId(null);
             setWorkflowStatus(prev => [...prev, `${data.data?.senderName} finished`]);
+            break;
+          case "worldstate_updating":
+            setIsWorldStateUpdating(true);
+            setWorkflowStatus(prev => [...prev, "World Compiler processing..."]);
+            break;
+          case "worldstate_updated":
+            setIsWorldStateUpdating(false);
+            if (data.worldState) setWorldState(data.worldState);
+            if (data.mermaid) setMermaidSpec(data.mermaid);
+            if (data.comparison) setComparison(data.comparison);
+            setWorkflowStatus(prev => [...prev, `WorldState v${data.worldState?.version || "?"} compiled`]);
+            break;
+          case "interrupt":
+            if (data.action?.interruptReason) {
+              setInterruptMessage(data.action.interruptReason);
+            }
+            setWorkflowStatus(prev => [...prev, "co-founder INTERRUPTED"]);
+            break;
+          case "counterfactuals":
+            if (data.counterfactuals) {
+              setCounterfactuals(data.counterfactuals);
+            }
+            setWorkflowStatus(prev => [...prev, `${data.counterfactuals?.length || 0} counterfactuals generated`]);
             break;
           case "done":
             setIsSending(false);
@@ -520,7 +521,7 @@ export default function MeetingRoom() {
           queryClient.invalidateQueries({ queryKey: ["/api/workspaces", meeting.workspaceId, "decisions"] });
           queryClient.invalidateQueries({ queryKey: ["/api/workspaces", meeting.workspaceId, "tasks"] });
         }
-        toast({ title: "Meeting ended", description: "Artifacts and decisions have been generated." });
+        toast({ title: "Meeting ended", description: "Decision memory saved. Artifacts and tasks generated." });
       }
     );
   };
@@ -561,11 +562,16 @@ export default function MeetingRoom() {
             </h1>
             <div className="flex items-center gap-2 flex-wrap">
               <p className="text-xs text-muted-foreground">
-                {meeting.status === "active" ? "In Progress" : "Ended"} - {agentIds.length} agent{agentIds.length !== 1 ? "s" : ""}
+                {meeting.status === "active" ? "In Progress" : "Ended"} - {agentIds.length + 1} participants
               </p>
               <Badge variant="outline" className="text-[10px] px-1.5 py-0" data-testid="badge-ai-provider">
                 {meeting.aiProvider === "gemini" ? "Gemini" : "OpenAI"}
               </Badge>
+              {worldState && worldState.version > 0 && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                  WorldState v{worldState.version}
+                </Badge>
+              )}
             </div>
           </div>
         </div>
@@ -603,27 +609,42 @@ export default function MeetingRoom() {
             onSend={handleSendMessage}
             isSending={isSending}
             meetingStatus={meeting.status}
+            interruptMessage={interruptMessage}
           />
         </div>
 
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
-          <CenterStage
-            artifacts={artifacts}
-            decisions={decisions}
-            tasks={tasks}
-            isSummarizing={isSummarizing}
-            summaryArtifacts={summaryArtifacts}
-            summaryDecisions={summaryDecisions}
-            summaryTasks={summaryTasks}
-          />
+          {isSummarizing ? (
+            <div className="flex flex-col items-center justify-center h-full gap-4">
+              <div className="relative">
+                <div className="w-16 h-16 rounded-full border-2 border-primary/30 flex items-center justify-center">
+                  <Brain className="w-8 h-8 text-primary animate-pulse" />
+                </div>
+                <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+              </div>
+              <div className="text-center">
+                <p className="font-semibold text-foreground">Consensus Engine Active</p>
+                <p className="text-sm text-muted-foreground mt-1">Analyzing transcript & WorldState...</p>
+              </div>
+            </div>
+          ) : (
+            <LiveCanvas
+              worldState={worldState}
+              mermaidSpec={mermaidSpec}
+              comparison={comparison}
+              counterfactuals={counterfactuals}
+              isUpdating={isWorldStateUpdating}
+            />
+          )}
         </div>
 
-        <div className="w-[280px] border-l border-border flex-shrink-0 flex flex-col min-h-0">
+        <div className="w-[260px] border-l border-border flex-shrink-0 flex flex-col min-h-0">
           <RightPanel
             agents={agents}
             agentIds={agentIds}
             workflowStatus={workflowStatus}
             streamingAgentId={streamingAgentId}
+            worldState={worldState}
           />
         </div>
       </div>

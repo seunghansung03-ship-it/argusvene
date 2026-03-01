@@ -1,67 +1,108 @@
 # ArgusVene - AI Co-founder Engine
 
 ## Overview
-ArgusVene is a Multi-Agent Co-founder Engine for founders and executives. It transforms meetings into documented decisions, structured artifacts, and actionable tasks through AI-powered agents.
+ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Live Agent Challenge hackathon. It transforms live meetings into documented decisions, structured artifacts, and actionable tasks through a multi-agent AI system powered by Google Gemini.
 
-## Architecture
+## Architecture - 5-Layer Decision Engine
 
-### 3-Pillar Engine
-1. **Consensus/Summarizer Engine** - Analyzes meeting transcripts to extract artifacts, decisions, and tasks
-2. **Document Hub** - Stores and retrieves all generated artifacts and decisions per workspace
-3. **OpenClaw Runtime** - AI-powered task execution system (ai_draft, ai_research, manual)
+### Layer 1: Voice/Text Input
+- Browser-based speech recognition (Web Speech API) for voice input
+- Text input fallback
+- Real-time transcript with speaker labels
+
+### Layer 2: World Compiler (`server/world-compiler.ts`)
+- Processes transcript through Gemini to extract/update structured WorldState
+- Incremental updates: entities, assumptions, constraints, options, scenarios, metrics
+- Generates Mermaid.js decision tree diagrams
+- Produces scenario comparison data
+
+### Layer 3: AI Participant Engine (`server/ai-participant.ts`)
+- Interrupt policy: detects risk, uncertainty, unvalidated assumptions
+- Always generates 2 counterfactual scenarios per decision point
+- Critical question queue for challenging blind spots
+- Outputs AgentAction { interrupt, counterfactuals[], questions[] }
+
+### Layer 4: Live Canvas (`client/src/components/live-canvas.tsx`)
+- Decision Tree visualization (Mermaid.js)
+- Scenario Comparison view (side-by-side metrics)
+- Assumption Panel (confidence bars, challenge tracking)
+- Counterfactual display
+- Real-time updates via SSE
+
+### Layer 5: Decision Memory
+- Full reasoning history with premises, chosen options, rejected alternatives
+- Exportable as JSON per meeting
+- Workspace-level decision memory aggregation
+- WorldState versioning for session replay
 
 ### Tech Stack
 - **Frontend:** React + TypeScript + Tailwind CSS + shadcn/ui
 - **Backend:** Express.js + TypeScript
 - **Database:** PostgreSQL with Drizzle ORM
-- **AI Providers:** OpenAI (gpt-5.2) + Google Gemini (2.5 Flash) via Replit AI Integrations
-- **Provider Abstraction:** `server/ai-provider.ts` - switchable per meeting
+- **AI Provider:** Google Gemini (2.5 Flash) via Replit AI Integrations (primary)
+- **Provider Abstraction:** `server/ai-provider.ts` - Gemini default, OpenAI fallback
+- **Visualization:** Mermaid.js for decision trees
 - **Routing:** wouter
 - **State:** TanStack React Query
+- **Streaming:** Server-Sent Events (SSE)
 
-### Data Model
-- `workspaces` - Organizations/projects (multi-org support)
-- `agentPersonas` - AI agent configurations (Strategy, Tech, Finance, Design)
-- `meetings` - Meeting rooms within workspaces (includes `aiProvider` field)
-- `meetingMessages` - Chat messages (human + agent)
-- `artifacts` - Generated documents (architecture docs, PRDs, specs, notes)
+### WorldState Data Model (JSONB on meetings table)
+```
+WorldState {
+  sessionId, version, lastUpdated,
+  entities[]: { id, name, type, description }
+  assumptions[]: { id, text, basis, confidence, challengedBy, status }
+  constraints[]: { id, type, description, severity }
+  options[]: { id, title, description, pros[], cons[], metrics }
+  scenarios[]: { id, label, type, optionId, metrics, description }
+  metrics[]: { id, name, value, unit, trend }
+  decisions[]: { id, title, chosenOptionId, reasoning, rejectedOptions[], premises[], timestamp }
+}
+```
+
+### Database Tables
+- `workspaces` - Organizations/projects
+- `agentPersonas` - AI agent configurations (Atlas/Strategy, Nova/Tech, Sage/Finance, Pixel/Design)
+- `meetings` - Meeting rooms with `worldState` JSONB column and `aiProvider` field
+- `meetingMessages` - Chat messages (human + agent + co-founder interrupts)
+- `artifacts` - Generated documents (architecture docs, PRDs, specs, notes, decision briefs)
 - `decisions` - Recorded decisions from meetings
-- `tasks` - Action items with `executionType` (manual/ai_draft/ai_research) and `executionResult`
-- `users` - User accounts (base schema)
+- `tasks` - Action items with `executionType` (manual/ai_draft/ai_research)
+- `users` - User accounts
 
-### Key Features
-- **Workspace Dashboard** with Quick Ideation Bar for instant AI chat
-- **Meeting Room** with 3-panel layout (Chat, Center Stage, Utility)
-- **Multi-Agent AI** chat with persona-specific responses (Atlas, Nova, Sage, Pixel)
-- **Dual AI Provider** support - OpenAI and Gemini selectable per meeting
-- **Consensus Engine** that auto-generates artifacts/decisions/tasks on meeting end
-- **OpenClaw Runtime** for AI-powered task execution (drafting, research)
-- **Document Hub** for viewing all generated artifacts
-- **Task Management** with status tracking and AI execution
-- **Dark/Light mode** toggle
-
-### File Structure
+### Key Files
+- `client/src/pages/meeting-room.tsx` - 3-panel meeting room (transcript, Live Canvas, agents)
+- `client/src/pages/workspace.tsx` - Workspace with Decision Memory tab
 - `client/src/pages/dashboard.tsx` - Main workspace dashboard
-- `client/src/pages/workspace.tsx` - Workspace detail with tabs (incl. provider selection, OpenClaw)
-- `client/src/pages/meeting-room.tsx` - 3-panel meeting room with provider badge
-- `client/src/components/theme-provider.tsx` - Theme context
+- `client/src/components/live-canvas.tsx` - Decision tree + scenario comparison + assumptions
 - `client/src/components/agent-avatar.tsx` - Agent avatar component
 - `client/src/lib/api.ts` - SSE streaming helper
-- `server/ai-provider.ts` - Multi-provider AI abstraction (OpenAI + Gemini)
+- `server/world-compiler.ts` - Transcript → WorldState compiler (Gemini)
+- `server/ai-participant.ts` - Interrupt + counterfactual engine (Gemini)
+- `server/ai-provider.ts` - Multi-provider AI abstraction
 - `server/routes.ts` - All API routes including AI streaming
 - `server/storage.ts` - Database storage layer
-- `server/seed.ts` - Seed data for workspaces and agents
-- `server/db.ts` - Database connection
 - `shared/schema.ts` - Drizzle schema definitions
+- `shared/types/worldstate.ts` - WorldState TypeScript interfaces
 
 ### API Routes
 - `GET/POST /api/workspaces` - Workspace CRUD
-- `GET/POST /api/workspaces/:wsId/meetings` - Meeting management (accepts `aiProvider`)
-- `POST /api/meetings/:id/messages` - Send message + get multi-agent AI responses (SSE)
+- `GET/POST /api/workspaces/:wsId/meetings` - Meeting management
+- `POST /api/meetings/:id/messages` - Send message + multi-agent responses + WorldState update + interrupt check (SSE)
+- `GET /api/meetings/:id/worldstate` - Get current WorldState + mermaid + comparison
 - `POST /api/meetings/:id/summarize` - End meeting + generate artifacts (SSE)
-- `POST /api/tasks/:id/execute` - OpenClaw task execution (SSE streaming)
+- `GET /api/meetings/:id/decision-memory` - Export full decision memory as JSON
+- `GET /api/workspaces/:wsId/decision-memory` - Workspace-level decision memory
+- `POST /api/tasks/:id/execute` - OpenClaw task execution (SSE)
 - `GET /api/workspaces/:wsId/artifacts|decisions|tasks` - Document hub
-- `POST /api/quick-chat` - Quick ideation chat (SSE, accepts `provider`)
+- `POST /api/quick-chat` - Quick ideation chat (SSE)
 - `GET /api/agents` - List AI agent personas
-- `GET /api/providers` - List available AI providers
-- `POST /api/providers/default` - Set default AI provider
+- `GET/POST /api/providers` - AI provider management
+
+### SSE Event Types (Meeting Messages)
+- `user_message` - User's message saved
+- `agent_start/agent_chunk/agent_done` - Agent streaming response
+- `worldstate_updating/worldstate_updated` - World Compiler processing
+- `interrupt` - co-founder intervenes (with reason)
+- `counterfactuals` - 2 alternative scenarios generated
+- `done` - Stream complete

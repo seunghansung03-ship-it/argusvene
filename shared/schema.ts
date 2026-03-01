@@ -55,7 +55,8 @@ export const meetings = pgTable("meetings", {
   title: text("title").notNull(),
   status: text("status").default("active").notNull(),
   agentIds: jsonb("agent_ids").$type<number[]>().default([]),
-  aiProvider: text("ai_provider").default("openai").notNull(),
+  aiProvider: text("ai_provider").default("gemini").notNull(),
+  worldState: jsonb("world_state"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   endedAt: timestamp("ended_at"),
 });
