@@ -94,6 +94,7 @@ function ChatPanel({
   liveSpeaker,
   interimTranscript,
   pendingAgentSelect,
+  ttsPlaying,
 }: {
   messages: MeetingMessage[];
   streamingMessages: StreamingMessage[];
@@ -112,9 +113,11 @@ function ChatPanel({
   liveSpeaker: string | null;
   interimTranscript: string;
   pendingAgentSelect: boolean;
+  ttsPlaying: boolean;
 }) {
   const [input, setInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const wasRecordingBeforeTTS = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
   const { speak, stop, isSpeaking, elevenLabsAvailable } = useTTS();
@@ -126,19 +129,19 @@ function ChatPanel({
     }
   }, [messages, streamingMessages, interimTranscript]);
 
-  const handleSend = () => {
-    if (!input.trim() || isSending) return;
-    onSend(input.trim());
-    setInput("");
-  };
-
-  const toggleVoice = () => {
-    if (isRecording) {
-      recognitionRef.current?.stop();
+  useEffect(() => {
+    const anyTTSPlaying = ttsPlaying || isSpeaking;
+    if (anyTTSPlaying && isRecording) {
+      wasRecordingBeforeTTS.current = true;
+      try { recognitionRef.current?.stop(); } catch {}
       setIsRecording(false);
-      return;
+    } else if (!anyTTSPlaying && wasRecordingBeforeTTS.current) {
+      wasRecordingBeforeTTS.current = false;
+      setTimeout(() => startRecording(), 300);
     }
+  }, [ttsPlaying, isSpeaking]);
 
+  const startRecording = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) return;
 
@@ -163,6 +166,22 @@ function ChatPanel({
     recognitionRef.current = recognition;
     recognition.start();
     setIsRecording(true);
+  };
+
+  const handleSend = () => {
+    if (!input.trim() || isSending) return;
+    onSend(input.trim());
+    setInput("");
+  };
+
+  const toggleVoice = () => {
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      wasRecordingBeforeTTS.current = false;
+      return;
+    }
+    startRecording();
   };
 
   const agentMap = new Map(agents.map(a => [a.id, a]));
@@ -1127,6 +1146,7 @@ export default function MeetingRoom() {
             liveSpeaker={liveSpeaker}
             interimTranscript={interimTranscript}
             pendingAgentSelect={pendingAgentSelect}
+            ttsPlaying={mainTTS.isSpeaking}
           />
         </div>
 
