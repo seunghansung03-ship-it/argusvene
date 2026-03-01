@@ -21,7 +21,7 @@ function ThemeToggle() {
       size="icon"
       variant="ghost"
       onClick={toggleTheme}
-      className="fixed top-4 right-4 z-50"
+      className="fixed top-4 right-14 z-50"
     >
       {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
     </Button>
