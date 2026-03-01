@@ -1,0 +1,73 @@
+# ArgusVene: The AI Co-founder Engine
+**Product Architecture & Technical Whitepaper (V3)**
+
+## 1. Executive Summary
+ArgusVene is not a simple chatbot; it is a **Multi-Agent Co-founder Engine** designed for founders and executives. It acts as an autonomous organizational brain that participates in meetings, records decisions, generates structured artifacts (code, docs, tickets), and physically executes tasks via a local Python runtime. 
+
+The ultimate goal of ArgusVene is to seamlessly blend human ideation with AI execution, transforming a simple meeting into a fully documented and actioned workflow.
+
+---
+
+## 2. The Core 3-Pillar Engine
+
+ArgusVene V3 is powered by three distinct but interconnected AI pipelines that move data from *Conversation* to *Memory* to *Action*.
+
+### Pillar 1: The Consensus / Summarizer Engine (Output Structuring)
+When a meeting concludes, a hidden "Consensus Agent" reads the entire raw transcript.
+- **Function:** It extracts actionable items and final decisions, transforming plain text into structured `ArtifactRecords` (e.g., Architecture Docs, PRDs, Jira Tickets) and `DecisionRecords` (e.g., "Decided to drop Feature X").
+- **Impact:** Eliminates the need for manual meeting minutes. The AI handles the administrative overhead of documentation.
+
+### Pillar 2: Document Hub & RAG (Organizational Memory)
+Information from Pillar 1 must be remembered.
+- **Function:** Every [Artifact](file:///Users/seongseunghan/Desktop/ArgusVene/packages/core/src/contracts/artifact.ts#8-24) and [Decision](file:///Users/seongseunghan/Desktop/ArgusVene/packages/core/src/schemas/world-state.ts#62-71) is embedded into a Vector Database (Document Hub). When a new meeting starts, the orchestrator performs *Context Bootstrapping*—injecting previous decisions and context into the prompt.
+- **Impact:** Agents maintain absolute continuity. If you ask, "What did we decide last week?", the AI instantly retrieves and references the exact decision log.
+
+### Pillar 3: OpenClaw Runtime (Taking Action)
+Documentation is not enough; the Co-founder must take action.
+- **Function:** When an [Artifact](file:///Users/seongseunghan/Desktop/ArgusVene/packages/core/src/contracts/artifact.ts#8-24) or [Task](file:///Users/seongseunghan/Desktop/ArgusVene/packages/core/src/contracts/task.ts#8-22) requires physical execution (e.g., "Draft a follow-up email", "Commit this code", "Search the web"), the ArgusVene backend sends a webhook via the [OpenClawAdapter](file:///Users/seongseunghan/Desktop/ArgusVene/services/api/src/adapters/openclaw-adapter.ts#14-17) to a local Python runtime (`openclaw-main`).
+- **Impact:** AI escapes the browser. It can read local files, execute terminal commands, and perform the actual labor required by the decisions made in the meeting room.
+
+---
+
+## 3. UX / UI Architecture (The Interface)
+
+ArgusVene abandons the single-chat-window paradigm in favor of a specialized, multi-level workspace designed for deep focus and organizational management.
+
+### Level 1: The Workspace Dashboard (The Lobby)
+- **Multi-Organization Support:** Users can switch between different "Companies" or "Major Projects," isolating context and data.
+- **Quick Ideation Bar:** A Google-like search bar on the landing page allows for instantaneous, ad-hoc chat with the Co-founder without entering a heavy meeting room.
+- **Team Management:** Ability to invite human members (via Google Workspace) alongside AI Agents.
+
+### Level 2: The Meeting Room (Focus Mode)
+The Meeting Room implements a **Reorganized 3-Panel Layout** optimized for getting work done:
+
+1. **Left Panel (Group Chat & Transcript):** 
+   - A Slack-like interface where human participants (separated by voice-recognition if using audio) and multi-persona AI Agents (Strategy, Tech, Finance) converse naturally.
+2. **Center Panel (The Computer Screen / Stage):** 
+   - The largest area of the screen. This is where generated code, live documents, and structured Decision Canvases are rendered instantly as the AI creates them.
+3. **Right Panel (Utility & Workflow):**
+   - *Top Half:* Reference Viewer for PDFs, architectural diagrams, or past documents relevant to the current discussion.
+   - *Bottom Half:* AI Workflow Status—a live pulse showing exactly what the agents are thinking, calculating, or executing behind the scenes.
+
+---
+
+## 4. The Complete User Journey
+
+1. **Enter:** The user logs in and lands on the Workspace Dashboard.
+2. **Setup:** The user creates a new Meeting Room within "Project Alpha," selecting the 'Tech Architect' and 'Finance' agents to join.
+3. **Discuss (Pillar 2):** The room boots up. The RAG engine automatically injects the context from yesterday's meeting into the Agents' memory.
+4. **Ideate (Center UI):** The user proposes a massive infrastructure change. The 'Tech Agent' objects, highlighting execution risks in the Right Panel, while rendering an alternative Architecture Diagram in the Center Stage.
+5. **Decide (Pillar 1):** The user agrees to the alternative. The meeting ends. The Summarizer Engine instantly kicks in, generating a formal "Architecture V2 Document" and dropping it into the Project Hub.
+6. **Execute (Pillar 3):** A generated "Task" requires updating the local [README.md](file:///Users/seongseunghan/Desktop/ArgusVene/README.md). The OpenClaw runtime executes this silently in the background.
+
+---
+
+## 5. Technology Stack
+
+- **Frontend:** HTML/CSS/JS (Vanilla HTML5 with modern CSS Grid/Flexbox for the 3-Panel glassmorphism design).
+- **Backend:** Node.js API Service.
+- **Database/State Layer:** Google Firestore (Stores Sessions, Workspaces, Artifacts, and Decision Logs in real-time).
+- **Real-time Sync:** Server-Sent Events (SSE) linking backend updates to the UI immediately.
+- **AI Brain:** Google Gemini 1.5-Flash (Handles inference, scenario generation, and JSON structuring).
+- **Execution Runtime:** Python-based OpenClaw system (Handles terminal and OS-level operations).
+- **Infrastructure:** Google Cloud Run (Containerized, auto-scaling deployment).
