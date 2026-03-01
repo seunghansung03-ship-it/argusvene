@@ -866,7 +866,7 @@ export default function MeetingRoom() {
       () => { setIsSending(false); isSendingRef.current = false; abortControllerRef.current = null; },
       ac.signal
     );
-  }, [meetingId, pendingUserMessage, handleSendMessage]);
+  }, [meetingId, pendingUserMessage]);
 
   const handleSendMessage = useCallback(async (content: string, skipAgentSelect?: boolean) => {
     if (!skipAgentSelect && !liveModeRef.current) {
