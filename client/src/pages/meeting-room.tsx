@@ -542,6 +542,7 @@ export default function MeetingRoom() {
   const [isWorldStateUpdating, setIsWorldStateUpdating] = useState(false);
   const [interruptMessage, setInterruptMessage] = useState<string | null>(null);
   const [voiceMode, setVoiceMode] = useState(false);
+  const voiceModeRef = useRef(false);
   const [liveMode, setLiveMode] = useState(false);
   const [liveSpeaker, setLiveSpeaker] = useState<string | null>(null);
   const [interimTranscript, setInterimTranscript] = useState("");
@@ -656,6 +657,7 @@ export default function MeetingRoom() {
       mainTTS.stop();
     } else {
       liveModeRef.current = true;
+      voiceModeRef.current = true;
       setLiveMode(true);
       setVoiceMode(true);
       startLiveSTT();
@@ -737,7 +739,7 @@ export default function MeetingRoom() {
           case "agent_done":
             setStreamingMessages(prev => {
               const msg = prev.find(sm => sm.agentId === data.agentId);
-              if (msg && voiceMode) {
+              if (msg && (voiceModeRef.current || liveModeRef.current)) {
                 ttsQueueRef.current.push({ text: msg.content, agentName: msg.agentName });
               }
               if (msg && liveModeRef.current) {
@@ -766,7 +768,7 @@ export default function MeetingRoom() {
           case "interrupt":
             if (data.action?.interruptReason) {
               setInterruptMessage(data.action.interruptReason);
-              if (voiceMode) {
+              if (voiceModeRef.current || liveModeRef.current) {
                 ttsQueueRef.current.push({ text: data.action.interruptReason, agentName: "co-founder" });
               }
             }
@@ -785,7 +787,7 @@ export default function MeetingRoom() {
             queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
 
             const hasQueuedTTS = ttsQueueRef.current.length > 0;
-            if (voiceMode && hasQueuedTTS) {
+            if ((voiceModeRef.current || liveModeRef.current) && hasQueuedTTS) {
               const items = [...ttsQueueRef.current];
               ttsQueueRef.current = [];
               items.forEach(item => mainTTS.speak(item.text, item.agentName));
@@ -947,6 +949,7 @@ export default function MeetingRoom() {
             onToggleVoiceMode={() => {
               const next = !voiceMode;
               setVoiceMode(next);
+              voiceModeRef.current = next;
               if (!next) mainTTS.stop();
             }}
             liveMode={liveMode}

@@ -286,9 +286,25 @@ export async function registerRoutes(
             content: m.senderType === "human" ? m.content : `[${m.senderName}]: ${m.content}`,
           }));
 
+          const otherAgentNames = validAgents.filter(a => a.id !== agent.id).map(a => `${a.name} (${a.role})`).join(", ");
           const systemMsg: ChatMessage = {
             role: "system",
-            content: `${agent.systemPrompt}\n\nYou are ${agent.name}, the ${agent.role}. You are a co-founder AI participant in a live strategy meeting. Respond concisely and in-character. Challenge assumptions, propose alternatives, and think critically. Keep responses focused and under 300 words unless a detailed analysis is required.`,
+            content: `${agent.systemPrompt}
+
+You are ${agent.name}, the ${agent.role}. You are participating in a LIVE voice meeting with a human founder and other AI co-founders: ${otherAgentNames || "none"}.
+
+CONVERSATION RULES:
+- Speak naturally as if in a real meeting — use conversational tone, not formal reports
+- Address others by name: "I agree with Atlas on the timeline, but..." or "Nova, have you considered..."
+- React to what was JUST said — don't repeat the full context, respond directly
+- Express opinions with personality: show enthusiasm, skepticism, concern, excitement
+- Use natural speech patterns: "Look, here's the thing...", "Actually, I'd push back on that...", "That's a solid point, and building on it..."
+- Keep responses SHORT for voice (2-4 sentences typical, max 150 words) — this is a conversation, not a presentation
+- If you disagree, say so directly but constructively
+- Ask the human founder follow-up questions to keep the dialogue flowing
+- Avoid bullet points, headers, or markdown formatting — speak in paragraphs as you would out loud
+- Don't summarize the entire discussion — just add your perspective on the latest point
+- Use the user's language (if they speak Korean, respond in Korean; if English, respond in English)`,
           };
 
           let fullResponse = "";
