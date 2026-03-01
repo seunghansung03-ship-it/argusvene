@@ -44,10 +44,20 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 - Workspace-level decision memory aggregation
 - WorldState versioning for session replay
 
+### Authentication
+- **Firebase Auth** with Google OAuth (signInWithPopup)
+- `client/src/lib/firebase.ts` - Firebase app initialization with VITE_ env vars
+- `client/src/hooks/use-auth.tsx` - AuthProvider context + useAuth hook
+- `client/src/pages/login.tsx` - Login page with Google sign-in button
+- Protected routes in `App.tsx` via `ProtectedRoutes` component
+- User profile display + sign-out button on dashboard
+- **Setup required**: Add Replit dev domain to Firebase Console → Authentication → Authorized Domains
+
 ### Tech Stack
 - **Frontend:** React + TypeScript + Tailwind CSS + shadcn/ui
 - **Backend:** Express.js + TypeScript
 - **Database:** PostgreSQL with Drizzle ORM
+- **Auth:** Firebase Authentication (Google OAuth)
 - **AI Provider:** Google Gemini (2.5 Flash) via Replit AI Integrations (primary)
 - **Provider Abstraction:** `server/ai-provider.ts` - Gemini default, OpenAI fallback
 - **TTS:** ElevenLabs API (`eleven_multilingual_v2` model, per-agent unique voices), browser SpeechSynthesis fallback
@@ -81,9 +91,12 @@ WorldState {
 - `users` - User accounts
 
 ### Key Files
+- `client/src/pages/login.tsx` - Google OAuth login page
+- `client/src/hooks/use-auth.tsx` - Firebase auth context/provider
+- `client/src/lib/firebase.ts` - Firebase app config
 - `client/src/pages/meeting-room.tsx` - 3-panel meeting room (transcript, Live Canvas, agents)
 - `client/src/pages/workspace.tsx` - Workspace with Decision Memory tab
-- `client/src/pages/dashboard.tsx` - Main workspace dashboard
+- `client/src/pages/dashboard.tsx` - Main workspace dashboard with user profile/signout
 - `client/src/components/live-canvas.tsx` - Decision tree + scenario comparison + assumptions
 - `client/src/components/agent-avatar.tsx` - Agent avatar component
 - `client/src/lib/api.ts` - SSE streaming helper

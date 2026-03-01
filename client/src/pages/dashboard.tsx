@@ -13,8 +13,9 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Plus, Send, Rocket, FlaskConical, TrendingUp, Briefcase,
   MessageSquare, FileText, CheckCircle2, ListTodo, ArrowRight,
-  Sparkles, X, CheckCircle, XCircle, Zap, Loader2,
+  Sparkles, X, CheckCircle, XCircle, Zap, Loader2, LogOut,
 } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
 import type { Workspace, Artifact, Decision, Task } from "@shared/schema";
 
 const iconMap: Record<string, typeof Rocket> = {
@@ -260,9 +261,34 @@ export default function Dashboard() {
     },
   });
 
+  const { user, signOut } = useAuth();
+
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-5xl mx-auto px-6 py-12">
+        <div className="flex items-center justify-end mb-4">
+          <div className="flex items-center gap-3">
+            {user?.photoURL && (
+              <img
+                src={user.photoURL}
+                alt=""
+                className="w-8 h-8 rounded-full"
+                data-testid="img-user-avatar"
+              />
+            )}
+            <span className="text-sm text-muted-foreground" data-testid="text-user-name">
+              {user?.displayName || user?.email}
+            </span>
+            <Button
+              data-testid="button-sign-out"
+              size="sm"
+              variant="ghost"
+              onClick={signOut}
+            >
+              <LogOut className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
         <div className="text-center mb-12">
           <div className="inline-flex items-center gap-2 mb-4">
             <div className="w-10 h-10 rounded-md bg-primary flex items-center justify-center">
