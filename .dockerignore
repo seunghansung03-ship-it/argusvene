@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.gitignore
+.playwright
+.cache
+**/chrome-linux64/
+**/chrome-headless-shell-linux64/
+attached_assets
+.local
+*.md
+!package.json
