@@ -678,7 +678,7 @@ function DecisionMemoryTab({ workspaceId }: { workspaceId: number }) {
 
   if (isLoading) return <div className="space-y-3">{[1, 2].map(i => <Skeleton key={i} className="h-20 rounded-md" />)}</div>;
 
-  if (!memories || memories.length === 0) {
+  if (!memories || !Array.isArray(memories) || memories.length === 0) {
     return (
       <Card className="p-8 text-center border-card-border">
         <Brain className="w-10 h-10 text-muted-foreground mx-auto mb-3" />

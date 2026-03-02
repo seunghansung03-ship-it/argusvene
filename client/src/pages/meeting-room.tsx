@@ -14,12 +14,11 @@ import { AgentAvatar } from "@/components/agent-avatar";
 import LiveCanvas from "@/components/live-canvas";
 import {
   ArrowLeft, Send, FileText, CheckCircle2, ListTodo,
-  Loader2, User, Sparkles, StopCircle, Brain,
+  Loader2, User, StopCircle, Brain,
   Activity, Clock, FileCode, Eye, Mic, MicOff,
   AlertTriangle, Zap, Volume2, VolumeX,
 } from "lucide-react";
 import { useTTS } from "@/hooks/use-tts";
-import { useGeminiLive, type GeminiLiveStatus } from "@/hooks/use-gemini-live";
 import { useAuth } from "@/hooks/use-auth";
 import type { Meeting, MeetingMessage, AgentPersona, Artifact, Decision, Task } from "@shared/schema";
 
@@ -96,8 +95,6 @@ function ChatPanel({
   interimTranscript,
   pendingAgentSelect,
   ttsPlaying,
-  geminiLiveStatus,
-  onToggleGeminiLive,
 }: {
   messages: MeetingMessage[];
   streamingMessages: StreamingMessage[];
@@ -117,8 +114,6 @@ function ChatPanel({
   interimTranscript: string;
   pendingAgentSelect: boolean;
   ttsPlaying: boolean;
-  geminiLiveStatus?: string;
-  onToggleGeminiLive?: () => void;
 }) {
   const [input, setInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
@@ -495,56 +490,8 @@ function ChatPanel({
                   <Mic className="w-3 h-3 mr-1.5" />
                   Go Live
                 </Button>
-                {onToggleGeminiLive && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={`h-7 px-3 text-xs ${
-                      geminiLiveStatus === "connected" || geminiLiveStatus === "listening" || geminiLiveStatus === "speaking"
-                        ? "border-green-500/30 text-green-400"
-                        : geminiLiveStatus === "connecting"
-                          ? "border-yellow-500/30 text-yellow-400"
-                          : "border-purple-500/30 text-purple-400"
-                    }`}
-                    onClick={onToggleGeminiLive}
-                    disabled={geminiLiveStatus === "connecting"}
-                    data-testid="button-gemini-live"
-                  >
-                    <Sparkles className="w-3 h-3 mr-1.5" />
-                    {geminiLiveStatus === "connecting" ? "Connecting..." :
-                     geminiLiveStatus === "disconnected" || !geminiLiveStatus ? "Gemini Live" :
-                     "End Gemini Live"}
-                  </Button>
-                )}
               </div>
             </>
-          ) : geminiLiveStatus && geminiLiveStatus !== "disconnected" ? (
-            <div className="flex flex-col items-center gap-2 py-1">
-              <div className="flex items-center gap-2 text-sm">
-                <Sparkles className={`w-4 h-4 ${geminiLiveStatus === "speaking" ? "text-purple-400" : "text-green-400"}`} />
-                <span className="text-muted-foreground">
-                  {geminiLiveStatus === "listening" ? "Gemini is listening..." :
-                   geminiLiveStatus === "speaking" ? "Gemini is speaking..." :
-                   geminiLiveStatus === "connecting" ? "Connecting to Gemini Live..." :
-                   "Gemini Live active"}
-                </span>
-                {(geminiLiveStatus === "listening" || geminiLiveStatus === "speaking") && (
-                  <VoiceWaveform active={true} color={geminiLiveStatus === "speaking" ? "bg-purple-500" : "bg-green-500"} />
-                )}
-              </div>
-              {onToggleGeminiLive && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-3 text-xs border-red-500/30 text-red-400"
-                  onClick={onToggleGeminiLive}
-                  data-testid="button-end-gemini-live"
-                >
-                  <StopCircle className="w-3 h-3 mr-1.5" />
-                  End Gemini Live
-                </Button>
-              )}
-            </div>
           ) : (
             <div className="flex items-center justify-center gap-3 py-1">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -714,22 +661,6 @@ export default function MeetingRoom() {
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
   const ttsQueueRef = useRef<{ text: string; agentName: string }[]>([]);
   const mainTTS = useTTS();
-  const [geminiLiveTranscript, setGeminiLiveTranscript] = useState<string[]>([]);
-  const geminiLive = useGeminiLive({
-    userId: user?.uid || null,
-    onTranscript: (text) => {
-      setGeminiLiveTranscript(prev => [...prev, text]);
-    },
-    onAudioStart: () => {
-      setLiveSpeaker("Gemini");
-    },
-    onAudioEnd: () => {
-      setLiveSpeaker(null);
-    },
-    onError: (msg) => {
-      toast({ title: "Gemini Live Error", description: msg, variant: "destructive" });
-    },
-  });
   const liveRecognitionRef = useRef<any>(null);
   const liveModeRef = useRef(false);
   const isSendingRef = useRef(false);
@@ -791,24 +722,6 @@ export default function MeetingRoom() {
         }
       }
 
-      if (mainTTS.isSpeaking || isSendingRef.current) {
-        if (finalText || (interim && interim.split(" ").length >= 2)) {
-          mainTTS.stop();
-          mainTTS.setOnQueueDone(null);
-          if (abortControllerRef.current) {
-            abortControllerRef.current.abort();
-            abortControllerRef.current = null;
-          }
-          setIsSending(false);
-          isSendingRef.current = false;
-          setStreamingMessages([]);
-          setStreamingAgentId(null);
-          setInterruptMessage(null);
-          setLiveSpeaker("You");
-          queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
-        }
-      }
-
       if (finalText) {
         pendingFinal += " " + finalText.trim();
         setInterimTranscript("");
@@ -845,35 +758,7 @@ export default function MeetingRoom() {
     } catch {}
   }, [meetingId, mainTTS]);
 
-  const toggleGeminiLive = useCallback(() => {
-    if (geminiLive.isConnected) {
-      geminiLive.disconnect();
-      setLiveSpeaker(null);
-      if (liveMode) {
-        liveModeRef.current = false;
-        setLiveMode(false);
-      }
-    } else {
-      if (liveMode) {
-        liveModeRef.current = false;
-        setLiveMode(false);
-        setInterimTranscript("");
-        if (liveRecognitionRef.current) {
-          try { liveRecognitionRef.current.abort(); } catch {}
-          liveRecognitionRef.current = null;
-        }
-        mainTTS.stop();
-      }
-      liveModeRef.current = true;
-      setLiveMode(true);
-      geminiLive.connect();
-    }
-  }, [geminiLive, liveMode, mainTTS]);
-
   const toggleLiveMode = useCallback(() => {
-    if (geminiLive.isConnected) {
-      geminiLive.disconnect();
-    }
     if (liveMode) {
       liveModeRef.current = false;
       setLiveMode(false);
@@ -891,7 +776,7 @@ export default function MeetingRoom() {
       setVoiceMode(true);
       startLiveSTT();
     }
-  }, [liveMode, startLiveSTT, mainTTS, geminiLive]);
+  }, [liveMode, startLiveSTT, mainTTS]);
 
   const { data: meeting, isLoading: meetingLoading } = useQuery<Meeting>({
     queryKey: ["/api/meetings", meetingId],
@@ -914,6 +799,22 @@ export default function MeetingRoom() {
     }
   }, [meeting]);
 
+  const liveWasRecordingBeforeTTS = useRef(false);
+  useEffect(() => {
+    if (!liveMode) return;
+    const anyPlaying = mainTTS.isSpeaking;
+    if (anyPlaying && liveRecognitionRef.current) {
+      liveWasRecordingBeforeTTS.current = true;
+      try { liveRecognitionRef.current.abort(); } catch {}
+      liveRecognitionRef.current = null;
+    } else if (!anyPlaying && liveWasRecordingBeforeTTS.current) {
+      liveWasRecordingBeforeTTS.current = false;
+      setTimeout(() => {
+        if (liveModeRef.current) startLiveSTT();
+      }, 500);
+    }
+  }, [mainTTS.isSpeaking, liveMode, startLiveSTT]);
+
   useEffect(() => {
     return () => {
       if (liveRecognitionRef.current) {
@@ -921,7 +822,6 @@ export default function MeetingRoom() {
         liveRecognitionRef.current = null;
       }
       liveModeRef.current = false;
-      geminiLive.disconnect();
     };
   }, []);
 
@@ -1143,9 +1043,6 @@ export default function MeetingRoom() {
   handleSendMessageRef.current = handleSendMessage;
 
   const handleEndMeeting = async () => {
-    if (geminiLive.isConnected) {
-      geminiLive.disconnect();
-    }
     if (liveMode) {
       liveModeRef.current = false;
       setLiveMode(false);
@@ -1244,13 +1141,7 @@ export default function MeetingRoom() {
                   WorldState v{worldState.version}
                 </Badge>
               )}
-              {liveMode && !geminiLive.isConnected && <LiveBadge />}
-              {geminiLive.isConnected && (
-                <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-purple-500/15 border border-purple-500/30" data-testid="badge-gemini-live">
-                  <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
-                  <span className="text-[11px] font-bold text-purple-400 tracking-wider">GEMINI LIVE</span>
-                </div>
-              )}
+              {liveMode && <LiveBadge />}
             </div>
           </div>
         </div>
@@ -1305,8 +1196,6 @@ export default function MeetingRoom() {
             interimTranscript={interimTranscript}
             pendingAgentSelect={pendingAgentSelect}
             ttsPlaying={mainTTS.isSpeaking}
-            geminiLiveStatus={geminiLive.status}
-            onToggleGeminiLive={toggleGeminiLive}
           />
         </div>
 

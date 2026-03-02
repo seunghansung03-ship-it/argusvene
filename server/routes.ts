@@ -1538,47 +1538,6 @@ RULES:
     }
   });
 
-  // ─── Gemini Live API WebSocket ───
-  const geminiLiveWss = new WebSocketServer({ server: httpServer, path: "/ws/gemini-live" });
-
-  geminiLiveWss.on("connection", async (ws, req) => {
-    const wsUrl = new URL(req.url || "", `http://${req.headers.host}`);
-    const userId = wsUrl.searchParams.get("userId");
-    if (!userId) {
-      ws.send(JSON.stringify({ type: "error", message: "Authentication required" }));
-      ws.close();
-      return;
-    }
-    console.log(`[ws/gemini-live] Connected: ${userId}`);
-
-    const { createLiveSession, sendAudioChunk, sendTextMessage, destroyLiveSession } = await import("./gemini-live");
-
-    const sessionCreated = await createLiveSession(userId, ws);
-    if (!sessionCreated) {
-      ws.close();
-      return;
-    }
-
-    ws.on("message", async (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-
-        if (msg.type === "audio") {
-          await sendAudioChunk(userId, msg.data, msg.mimeType || "audio/pcm;rate=16000");
-        } else if (msg.type === "text") {
-          await sendTextMessage(userId, msg.content);
-        }
-      } catch (e: any) {
-        console.error("[ws/gemini-live] Message error:", e.message);
-      }
-    });
-
-    ws.on("close", async () => {
-      console.log(`[ws/gemini-live] Disconnected: ${userId}`);
-      await destroyLiveSession(userId);
-    });
-  });
-
   // ─── Browser Navigator WebSocket (screenshot streaming) ───
   const wss = new WebSocketServer({ server: httpServer, path: "/ws/browser" });
 

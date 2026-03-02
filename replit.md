@@ -6,18 +6,10 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 ## Architecture - 5-Layer Decision Engine
 
 ### Layer 1: Voice/Text Input
-- **Live Mode** ("Go Live" button): Continuous STT → auto-send on 1.0s silence → agents respond with TTS → STT stays active for user interruption
-- **Gemini Live Mode** ("Gemini Live" button): Direct voice-to-voice via Gemini 2.5 Flash Native Audio API
-  - Server-side WebSocket proxy (`/ws/gemini-live`) → Google's Multimodal Live API
-  - Client captures PCM 16kHz via AudioWorklet (`pcm-capture-worklet.js`)
-  - Receives PCM 24kHz audio back, plays through AudioContext
-  - Native interruption support (Gemini detects user speaking during response)
-  - Co-founder persona with Aoede voice
-  - Files: `server/gemini-live.ts`, `client/src/hooks/use-gemini-live.ts`, `public/pcm-capture-worklet.js`
-- Browser-based speech recognition (Web Speech API) for standard voice input
+- **Live Mode** ("Go Live" button): Continuous STT → auto-send on 1.0s silence → agents respond with TTS
+- Browser-based speech recognition (Web Speech API) for voice input
 - ElevenLabs TTS auto-play in Live Mode with per-agent voices
-- **User Interruption**: In Live Mode, STT keeps listening during TTS playback. If user speaks (2+ words detected), TTS stops immediately, AI response is aborted, and user's new input takes priority
-- **Feedback prevention (text mode)**: STT pauses while TTS plays, resumes after TTS finishes. Live Mode uses interrupt-based approach instead.
+- **Feedback prevention**: STT pauses while TTS plays (both text mode and Live Mode), resumes 500ms after TTS finishes to prevent mic picking up speaker audio
 - Text input fallback with manual send
 - Real-time transcript with speaker labels + interim transcript display
 - **Natural conversation prompts**: Agents speak conversationally (1-3 sentences, under 80 words, no markdown/name tags), show emotion, take stances
