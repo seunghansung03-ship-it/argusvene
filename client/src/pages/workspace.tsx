@@ -55,7 +55,7 @@ function MeetingsTab({ workspaceId }: { workspaceId: number }) {
   });
 
   const availableProviders = providerData?.providers.filter(p => p.available) || [];
-  const effectiveProvider = aiProvider || providerData?.default || "openai";
+  const effectiveProvider = "gemini";
 
   const createMeeting = useMutation({
     mutationFn: (data: { title: string; agentIds: number[]; aiProvider: string }) =>
@@ -77,9 +77,8 @@ function MeetingsTab({ workspaceId }: { workspaceId: number }) {
   };
 
   const providerLabel = (id: string) => {
-    if (id === "openai") return "OpenAI GPT-5.2";
-    if (id === "gemini") return "Google Gemini 2.5";
-    return id;
+    if (id === "gemini") return "Gemini 2.5 Flash";
+    return "Gemini";
   };
 
   return (
@@ -105,27 +104,12 @@ function MeetingsTab({ workspaceId }: { workspaceId: number }) {
                 onChange={(e) => setTitle(e.target.value)}
               />
 
-              <div>
-                <p className="text-sm font-medium mb-2 text-foreground">AI Provider</p>
-                <Select value={effectiveProvider} onValueChange={setAiProvider}>
-                  <SelectTrigger data-testid="select-ai-provider">
-                    <SelectValue placeholder="Select AI provider" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableProviders.length > 0 ? (
-                      availableProviders.map(p => (
-                        <SelectItem key={p.id} value={p.id} data-testid={`option-provider-${p.id}`}>
-                          {p.name}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <>
-                        <SelectItem value="openai">OpenAI GPT-5.2</SelectItem>
-                        <SelectItem value="gemini">Google Gemini 2.5</SelectItem>
-                      </>
-                    )}
-                  </SelectContent>
-                </Select>
+              <div className="flex items-center gap-2 p-3 rounded-md border border-border bg-muted/50">
+                <Sparkles className="w-4 h-4 text-primary flex-shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">Google Gemini 2.5 Flash</p>
+                  <p className="text-xs text-muted-foreground">Primary AI Engine</p>
+                </div>
               </div>
 
               <div>
@@ -346,31 +330,134 @@ function ArtifactsTab({ workspaceId }: { workspaceId: number }) {
 }
 
 function DecisionsTab({ workspaceId }: { workspaceId: number }) {
+  const [copied, setCopied] = useState(false);
   const { data: decisions, isLoading } = useQuery<Decision[]>({
     queryKey: ["/api/workspaces", workspaceId, "decisions"],
     queryFn: () => fetch(`/api/workspaces/${workspaceId}/decisions`).then(r => r.json()),
   });
 
+  const { data: meetings } = useQuery<Meeting[]>({
+    queryKey: ["/api/workspaces", workspaceId, "meetings"],
+    queryFn: () => fetch(`/api/workspaces/${workspaceId}/meetings`).then(r => r.json()),
+  });
+
+  const worldStateDecisions = (meetings || [])
+    .filter(m => m.worldState && (m.worldState as any).decisions?.length > 0)
+    .flatMap(m => ((m.worldState as any).decisions || []).map((d: any) => ({ ...d, meetingTitle: m.title })));
+
+  const allDecisions = [
+    ...(decisions || []).map(d => ({ type: "formal" as const, id: d.id, title: d.title, description: d.description, status: d.status })),
+    ...worldStateDecisions.map((d: any) => ({ type: "worldstate" as const, id: d.id, title: d.title, reasoning: d.reasoning, rejectedOptions: d.rejectedOptions, premises: d.premises, meetingTitle: d.meetingTitle, timestamp: d.timestamp })),
+  ];
+
+  const handleExport = () => {
+    const exportData = {
+      workspace_id: workspaceId,
+      exported_at: new Date().toISOString(),
+      decisions: allDecisions,
+      worldstate_decisions: worldStateDecisions,
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `decision-memory-${workspaceId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyAll = () => {
+    const text = allDecisions.map(d => {
+      if (d.type === "worldstate") {
+        const ws = d as any;
+        let s = `## ${ws.title}\nReasoning: ${ws.reasoning || ""}`;
+        if (ws.premises?.length) s += `\nPremises: ${ws.premises.join(", ")}`;
+        if (ws.rejectedOptions?.length) s += `\nRejected: ${ws.rejectedOptions.map((r: any) => r.reason).join("; ")}`;
+        return s;
+      }
+      return `## ${d.title}\n${d.description || ""}`;
+    }).join("\n\n");
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   if (isLoading) return <div className="space-y-3">{[1, 2].map(i => <Skeleton key={i} className="h-16 rounded-md" />)}</div>;
 
-  return decisions && decisions.length > 0 ? (
-    <div className="space-y-3">
-      {decisions.map(d => (
-        <Card key={d.id} className="p-4 border-card-border" data-testid={`card-decision-${d.id}`}>
-          <div className="flex items-start gap-3">
-            <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="font-medium text-foreground">{d.title}</p>
-              <p className="text-sm text-muted-foreground mt-1">{d.description}</p>
+  return allDecisions.length > 0 ? (
+    <div>
+      <div className="flex items-center justify-end gap-2 mb-3">
+        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={handleCopyAll} data-testid="button-copy-decisions">
+          {copied ? <Check className="w-3 h-3 mr-1" /> : <Copy className="w-3 h-3 mr-1" />}
+          {copied ? "Copied" : "Copy All"}
+        </Button>
+        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={handleExport} data-testid="button-export-decisions">
+          <Download className="w-3 h-3 mr-1" />
+          Export JSON
+        </Button>
+      </div>
+      <div className="space-y-3">
+        {allDecisions.map((d, i) => (
+          <Card key={`${d.type}-${d.id}-${i}`} className="p-4 border-card-border" data-testid={`card-decision-${d.type}-${i}`}>
+            <div className="flex items-start gap-3">
+              {d.type === "worldstate" ? (
+                <Brain className="w-4 h-4 text-purple-500 mt-0.5 flex-shrink-0" />
+              ) : (
+                <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5 flex-shrink-0" />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-medium text-foreground">{d.title}</p>
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                    {d.type === "worldstate" ? "WorldState" : "Formal"}
+                  </Badge>
+                </div>
+                {d.type === "formal" && d.description && (
+                  <p className="text-sm text-muted-foreground mt-1">{d.description}</p>
+                )}
+                {d.type === "worldstate" && (
+                  <>
+                    {(d as any).reasoning && (
+                      <p className="text-sm text-muted-foreground mt-1">{(d as any).reasoning}</p>
+                    )}
+                    {(d as any).premises?.length > 0 && (
+                      <div className="mt-2">
+                        <p className="text-xs font-medium text-foreground flex items-center gap-1">
+                          <Shield className="w-3 h-3" /> Premises
+                        </p>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {(d as any).premises.map((p: string, j: number) => (
+                            <Badge key={j} variant="secondary" className="text-[10px]">{p}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {(d as any).rejectedOptions?.length > 0 && (
+                      <div className="mt-2">
+                        <p className="text-xs font-medium text-red-400 flex items-center gap-1">
+                          <AlertCircle className="w-3 h-3" /> Rejected Alternatives
+                        </p>
+                        {(d as any).rejectedOptions.map((r: any, j: number) => (
+                          <p key={j} className="text-xs text-muted-foreground ml-4 mt-0.5">• {r.reason}</p>
+                        ))}
+                      </div>
+                    )}
+                    {(d as any).meetingTitle && (
+                      <p className="text-[10px] text-muted-foreground mt-2">From: {(d as any).meetingTitle}</p>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
-          </div>
-        </Card>
-      ))}
+          </Card>
+        ))}
+      </div>
     </div>
   ) : (
     <Card className="p-8 text-center border-card-border">
       <CheckCircle2 className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
       <p className="text-muted-foreground">No decisions recorded yet.</p>
+      <p className="text-xs text-muted-foreground mt-1">Start a meeting and end it to see decision memory here.</p>
     </Card>
   );
 }

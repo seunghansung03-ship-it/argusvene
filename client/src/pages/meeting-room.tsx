@@ -1237,7 +1237,7 @@ export default function MeetingRoom() {
                 {meeting.status === "active" ? "In Progress" : "Ended"} - {agentIds.length + 1} participants
               </p>
               <Badge variant="outline" className="text-[10px] px-1.5 py-0" data-testid="badge-ai-provider">
-                {meeting.aiProvider === "gemini" ? "Gemini" : "OpenAI"}
+                Gemini 2.5
               </Badge>
               {worldState && worldState.version > 0 && (
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0">

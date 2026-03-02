@@ -37,11 +37,21 @@ function getUserId(req: express.Request): string | undefined {
   return req.headers["x-user-id"] as string | undefined;
 }
 
-async function verifyWorkspaceAccess(workspaceId: number, userId: string | undefined): Promise<boolean> {
+async function verifyWorkspaceAccess(workspaceId: number, userId: string | undefined, userEmail?: string): Promise<boolean> {
   const ws = await storage.getWorkspace(workspaceId);
   if (!ws) return false;
-  if (ws.userId && userId && ws.userId !== userId) return false;
-  return true;
+  if (!ws.userId) return true;
+  if (userId && ws.userId === userId) return true;
+  if (userEmail) {
+    const member = await storage.getWorkspaceMemberByEmail(workspaceId, userEmail);
+    if (member && member.status === "accepted") return true;
+  }
+  if (userId) {
+    const members = await storage.getWorkspaceMembers(workspaceId);
+    const memberMatch = members.find(m => m.userId === userId && m.status === "accepted");
+    if (memberMatch) return true;
+  }
+  return false;
 }
 
 export async function registerRoutes(
@@ -66,8 +76,14 @@ export async function registerRoutes(
   app.get("/api/workspaces", async (req, res) => {
     try {
       const userId = req.headers["x-user-id"] as string | undefined;
-      const ws = await storage.getWorkspaces(userId);
-      res.json(ws);
+      const ownedWs = await storage.getWorkspaces(userId);
+      if (userId) {
+        const memberWs = await storage.getWorkspacesByMemberUserId(userId);
+        const ownedIds = new Set(ownedWs.map(w => w.id));
+        const combined = [...ownedWs, ...memberWs.filter(w => !ownedIds.has(w.id))];
+        return res.json(combined);
+      }
+      res.json(ownedWs);
     } catch (e) {
       console.error("Error fetching workspaces:", e);
       res.status(500).json({ error: "Failed to fetch workspaces" });
@@ -110,6 +126,59 @@ export async function registerRoutes(
     } catch (e) {
       console.error("Error deleting workspace:", e);
       res.status(500).json({ error: "Failed to delete workspace" });
+    }
+  });
+
+  app.get("/api/workspaces/:wsId/members", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const wsId = parseInt(req.params.wsId);
+      if (!(await verifyWorkspaceAccess(wsId, userId))) return res.status(404).json({ error: "Not found" });
+      const members = await storage.getWorkspaceMembers(wsId);
+      res.json(members);
+    } catch (e) {
+      console.error("Error fetching members:", e);
+      res.status(500).json({ error: "Failed to fetch members" });
+    }
+  });
+
+  app.post("/api/workspaces/:wsId/members", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const wsId = parseInt(req.params.wsId);
+      if (!(await verifyWorkspaceAccess(wsId, userId))) return res.status(404).json({ error: "Not found" });
+
+      const parsed = z.object({ email: z.string().email() }).safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Valid email required" });
+
+      const existing = await storage.getWorkspaceMemberByEmail(wsId, parsed.data.email);
+      if (existing) return res.status(409).json({ error: "Already invited" });
+
+      const member = await storage.addWorkspaceMember({
+        workspaceId: wsId,
+        email: parsed.data.email,
+        role: "member",
+        invitedBy: userId || null,
+        status: "accepted",
+        userId: null,
+      });
+      res.status(201).json(member);
+    } catch (e) {
+      console.error("Error inviting member:", e);
+      res.status(500).json({ error: "Failed to invite member" });
+    }
+  });
+
+  app.delete("/api/workspaces/:wsId/members/:memberId", async (req, res) => {
+    try {
+      const userId = getUserId(req);
+      const wsId = parseInt(req.params.wsId);
+      if (!(await verifyWorkspaceAccess(wsId, userId))) return res.status(404).json({ error: "Not found" });
+      await storage.removeWorkspaceMember(parseInt(req.params.memberId));
+      res.status(204).send();
+    } catch (e) {
+      console.error("Error removing member:", e);
+      res.status(500).json({ error: "Failed to remove member" });
     }
   });
 

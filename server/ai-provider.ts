@@ -148,36 +148,28 @@ function createGeminiClient(): AIClient {
   };
 }
 
-const clients: Record<AIProvider, AIClient> = {
-  openai: createOpenAIClient(),
-  gemini: createGeminiClient(),
-};
+const geminiClient = createGeminiClient();
 
 let defaultProvider: AIProvider = "gemini";
 
 export function setDefaultProvider(provider: AIProvider) {
-  defaultProvider = provider;
+  defaultProvider = "gemini";
 }
 
 export function getDefaultProvider(): AIProvider {
-  return defaultProvider;
+  return "gemini";
 }
 
 export function getAIClient(provider?: AIProvider): AIClient {
-  return clients[provider || defaultProvider];
+  return geminiClient;
 }
 
 export function getAvailableProviders(): { id: AIProvider; name: string; available: boolean }[] {
   return [
     {
-      id: "openai",
-      name: "OpenAI (GPT-5.2)",
-      available: !!(process.env.AI_INTEGRATIONS_OPENAI_API_KEY && process.env.AI_INTEGRATIONS_OPENAI_BASE_URL),
-    },
-    {
       id: "gemini",
-      name: "Google Gemini (2.5 Flash)",
-      available: !!(process.env.AI_INTEGRATIONS_GEMINI_API_KEY && process.env.AI_INTEGRATIONS_GEMINI_BASE_URL),
+      name: "Google Gemini 2.5 Flash",
+      available: true,
     },
   ];
 }

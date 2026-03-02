@@ -149,6 +149,25 @@ export const insertTaskSchema = createInsertSchema(tasks).omit({
 export type Task = typeof tasks.$inferSelect;
 export type InsertTask = z.infer<typeof insertTaskSchema>;
 
+export const workspaceMembers = pgTable("workspace_members", {
+  id: serial("id").primaryKey(),
+  workspaceId: integer("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  role: text("role").default("member").notNull(),
+  invitedBy: text("invited_by"),
+  userId: text("user_id"),
+  status: text("status").default("pending").notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertWorkspaceMemberSchema = createInsertSchema(workspaceMembers).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
+export type InsertWorkspaceMember = z.infer<typeof insertWorkspaceMemberSchema>;
+
 export const conversations = pgTable("conversations", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),

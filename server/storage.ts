@@ -1,4 +1,4 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, or } from "drizzle-orm";
 import { db } from "./db";
 import {
   users, type User, type InsertUser,
@@ -9,6 +9,7 @@ import {
   artifacts, type Artifact, type InsertArtifact,
   decisions, type Decision, type InsertDecision,
   tasks, type Task, type InsertTask,
+  workspaceMembers, type WorkspaceMember, type InsertWorkspaceMember,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -49,6 +50,14 @@ export interface IStorage {
   createTask(task: InsertTask): Promise<Task>;
   updateTaskStatus(id: number, status: string): Promise<Task | undefined>;
   updateTaskExecution(id: number, result: string, status: string): Promise<Task | undefined>;
+
+  getWorkspaceMembers(workspaceId: number): Promise<WorkspaceMember[]>;
+  getWorkspaceMemberByEmail(workspaceId: number, email: string): Promise<WorkspaceMember | undefined>;
+  addWorkspaceMember(member: InsertWorkspaceMember): Promise<WorkspaceMember>;
+  updateWorkspaceMemberStatus(id: number, status: string, userId?: string): Promise<WorkspaceMember | undefined>;
+  removeWorkspaceMember(id: number): Promise<void>;
+  getWorkspacesByMemberEmail(email: string): Promise<Workspace[]>;
+  getWorkspacesByMemberUserId(userId: string): Promise<Workspace[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -171,6 +180,51 @@ export class DatabaseStorage implements IStorage {
   async updateTaskExecution(id: number, result: string, status: string) {
     const [updated] = await db.update(tasks).set({ executionResult: result, status, completedAt: new Date() }).where(eq(tasks.id, id)).returning();
     return updated;
+  }
+
+  async getWorkspaceMembers(workspaceId: number) {
+    return db.select().from(workspaceMembers).where(eq(workspaceMembers.workspaceId, workspaceId)).orderBy(desc(workspaceMembers.createdAt));
+  }
+  async getWorkspaceMemberByEmail(workspaceId: number, email: string) {
+    const [member] = await db.select().from(workspaceMembers).where(
+      and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.email, email.toLowerCase()))
+    );
+    return member;
+  }
+  async addWorkspaceMember(member: InsertWorkspaceMember) {
+    const [created] = await db.insert(workspaceMembers).values({ ...member, email: member.email.toLowerCase() }).returning();
+    return created;
+  }
+  async updateWorkspaceMemberStatus(id: number, status: string, userId?: string) {
+    const updates: any = { status };
+    if (userId) updates.userId = userId;
+    const [updated] = await db.update(workspaceMembers).set(updates).where(eq(workspaceMembers.id, id)).returning();
+    return updated;
+  }
+  async removeWorkspaceMember(id: number) {
+    await db.delete(workspaceMembers).where(eq(workspaceMembers.id, id));
+  }
+  async getWorkspacesByMemberEmail(email: string) {
+    const members = await db.select().from(workspaceMembers).where(
+      and(eq(workspaceMembers.email, email.toLowerCase()), eq(workspaceMembers.status, "accepted"))
+    );
+    if (members.length === 0) return [];
+    const wsIds = members.map(m => m.workspaceId);
+    const result = await db.select().from(workspaces).where(
+      or(...wsIds.map(id => eq(workspaces.id, id)))
+    );
+    return result;
+  }
+  async getWorkspacesByMemberUserId(userId: string) {
+    const members = await db.select().from(workspaceMembers).where(
+      and(eq(workspaceMembers.userId, userId), eq(workspaceMembers.status, "accepted"))
+    );
+    if (members.length === 0) return [];
+    const wsIds = members.map(m => m.workspaceId);
+    const result = await db.select().from(workspaces).where(
+      or(...wsIds.map(id => eq(workspaces.id, id)))
+    );
+    return result;
   }
 }
 
