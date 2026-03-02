@@ -1175,6 +1175,15 @@ export default function MeetingRoom() {
             `Created ${data.tasks?.length || 0} tasks`,
           ]);
         }
+        if (data.type === "code_start") {
+          setWorkflowStatus(prev => [...prev, "Coding Agent generating implementation..."]);
+        }
+        if (data.type === "code_complete") {
+          setWorkflowStatus(prev => [...prev, "Code implementation generated and saved"]);
+        }
+        if (data.type === "code_error") {
+          setWorkflowStatus(prev => [...prev, "Code generation skipped"]);
+        }
       },
       () => {
         setIsSummarizing(false);
@@ -1184,7 +1193,7 @@ export default function MeetingRoom() {
           queryClient.invalidateQueries({ queryKey: ["/api/workspaces", meeting.workspaceId, "decisions"] });
           queryClient.invalidateQueries({ queryKey: ["/api/workspaces", meeting.workspaceId, "tasks"] });
         }
-        toast({ title: "Meeting ended", description: "Decision memory saved. Artifacts and tasks generated." });
+        toast({ title: "Meeting ended", description: "Decision memory saved. Code & artifacts generated." });
       }
     );
   };
@@ -1312,8 +1321,15 @@ export default function MeetingRoom() {
               </div>
               <div className="text-center">
                 <p className="font-semibold text-foreground">Consensus Engine Active</p>
-                <p className="text-sm text-muted-foreground mt-1">Analyzing transcript & WorldState...</p>
+                <p className="text-sm text-muted-foreground mt-1">Analyzing transcript & generating code...</p>
               </div>
+              {workflowStatus.length > 0 && (
+                <div className="mt-2 space-y-1 text-center">
+                  {workflowStatus.slice(-4).map((s, i) => (
+                    <p key={i} className="text-xs text-muted-foreground animate-in fade-in">{s}</p>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <LiveCanvas
@@ -1323,6 +1339,8 @@ export default function MeetingRoom() {
               counterfactuals={counterfactuals}
               isUpdating={isWorldStateUpdating}
               userId={user?.uid || null}
+              meetingId={meetingId}
+              meetingStatus={meeting.status}
             />
           )}
         </div>

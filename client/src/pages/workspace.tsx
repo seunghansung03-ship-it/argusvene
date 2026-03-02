@@ -22,6 +22,7 @@ import {
   Rocket, FlaskConical, TrendingUp, Briefcase, Play, Loader2,
   Bot, Zap, Eye, FileCode, Brain, Download, Shield, GitBranch,
   ChevronDown, ChevronRight, Target, Pencil, Trash2, Volume2,
+  Code2, Copy, Check,
 } from "lucide-react";
 import type { Workspace, Meeting, AgentPersona, Artifact, Decision, Task } from "@shared/schema";
 
@@ -207,6 +208,66 @@ function MeetingsTab({ workspaceId }: { workspaceId: number }) {
   );
 }
 
+function CodeArtifactView({ artifact }: { artifact: Artifact }) {
+  const [copied, setCopied] = useState(false);
+  const content = artifact.content;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const fileBlocks = content.split(/\/\/ === FILE: /g).filter(Boolean);
+  const hasMultipleFiles = fileBlocks.length > 1 || content.includes("// === FILE:");
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/30">code</Badge>
+          <span className="text-xs text-muted-foreground">
+            {new Date(artifact.createdAt).toLocaleDateString()}
+          </span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={handleCopy} data-testid="button-copy-artifact-code">
+          {copied ? <Check className="w-3.5 h-3.5 mr-1.5 text-green-400" /> : <Copy className="w-3.5 h-3.5 mr-1.5" />}
+          {copied ? "Copied" : "Copy All"}
+        </Button>
+      </div>
+      <h3 className="text-xl font-semibold text-foreground mb-4" data-testid="text-artifact-title">
+        {artifact.title}
+      </h3>
+      {hasMultipleFiles ? (
+        <div className="space-y-3">
+          {fileBlocks.map((block, i) => {
+            const lines = block.split("\n");
+            const fileName = i === 0 && !content.startsWith("// === FILE:") ? null : lines[0]?.replace(/\s*===\s*$/, "").trim();
+            const fileContent = fileName ? lines.slice(1).join("\n").trim() : block.trim();
+            return (
+              <div key={i} className="rounded-md border border-border overflow-hidden">
+                {fileName && (
+                  <div className="px-3 py-1.5 bg-muted border-b border-border flex items-center gap-2">
+                    <FileCode className="w-3.5 h-3.5 text-emerald-400" />
+                    <span className="text-xs font-mono text-foreground">{fileName}</span>
+                  </div>
+                )}
+                <pre className="p-4 text-[12px] font-mono text-foreground bg-black/20 overflow-x-auto whitespace-pre-wrap leading-relaxed" data-testid={`code-file-${i}`}>
+                  {fileContent}
+                </pre>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <pre className="p-4 text-[12px] font-mono text-foreground bg-black/20 rounded-md border border-border overflow-x-auto whitespace-pre-wrap leading-relaxed" data-testid="code-artifact-content">
+          {content}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function ArtifactsTab({ workspaceId }: { workspaceId: number }) {
   const [selectedArtifact, setSelectedArtifact] = useState<Artifact | null>(null);
 
@@ -226,20 +287,26 @@ function ArtifactsTab({ workspaceId }: { workspaceId: number }) {
             Back
           </Button>
           <Card className="p-6 border-card-border">
-            <div className="flex items-center gap-2 mb-4 flex-wrap">
-              <Badge variant="secondary">{selectedArtifact.type.replace(/_/g, " ")}</Badge>
-              <span className="text-xs text-muted-foreground">
-                {new Date(selectedArtifact.createdAt).toLocaleDateString()}
-              </span>
-            </div>
-            <h3 className="text-xl font-semibold text-foreground mb-4" data-testid="text-artifact-title">
-              {selectedArtifact.title}
-            </h3>
-            <div className="prose prose-sm dark:prose-invert max-w-none" data-testid="text-artifact-content">
-              {selectedArtifact.content.split("\n").map((line, i) => (
-                <p key={i}>{line}</p>
-              ))}
-            </div>
+            {selectedArtifact.type === "code" ? (
+              <CodeArtifactView artifact={selectedArtifact} />
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-4 flex-wrap">
+                  <Badge variant="secondary">{selectedArtifact.type.replace(/_/g, " ")}</Badge>
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(selectedArtifact.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+                <h3 className="text-xl font-semibold text-foreground mb-4" data-testid="text-artifact-title">
+                  {selectedArtifact.title}
+                </h3>
+                <div className="prose prose-sm dark:prose-invert max-w-none" data-testid="text-artifact-content">
+                  {selectedArtifact.content.split("\n").map((line, i) => (
+                    <p key={i}>{line}</p>
+                  ))}
+                </div>
+              </>
+            )}
           </Card>
         </div>
       ) : artifacts && artifacts.length > 0 ? (
@@ -252,7 +319,11 @@ function ArtifactsTab({ workspaceId }: { workspaceId: number }) {
               data-testid={`card-artifact-${a.id}`}
             >
               <div className="flex items-center gap-3">
-                <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                {a.type === "code" ? (
+                  <Code2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                ) : (
+                  <FileText className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                )}
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-foreground truncate">{a.title}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">{a.type.replace(/_/g, " ")}</p>

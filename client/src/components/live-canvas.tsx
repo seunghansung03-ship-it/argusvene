@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   GitBranch, BarChart3, Shield, AlertTriangle,
   TrendingUp, TrendingDown, Minus, Target, Monitor,
+  Code2, Play, Loader2, Copy, Check, FileCode,
 } from "lucide-react";
+import { streamChat } from "@/lib/api";
 import BrowserPanel from "./browser-panel";
 
 interface WorldState {
@@ -35,6 +38,8 @@ interface LiveCanvasProps {
   counterfactuals: Counterfactual[];
   isUpdating: boolean;
   userId?: string | null;
+  meetingId?: number;
+  meetingStatus?: string;
 }
 
 function MermaidRenderer({ spec }: { spec: string }) {
@@ -220,6 +225,151 @@ function MetricsPanel({ metrics }: { metrics: any[] }) {
   );
 }
 
+function CodePanel({ meetingId, meetingStatus, worldState }: { meetingId?: number; meetingStatus?: string; worldState: WorldState | null }) {
+  const [code, setCode] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const codeEndRef = useRef<HTMLDivElement>(null);
+
+  const handleGenerate = useCallback(async () => {
+    if (!meetingId || isGenerating) return;
+    setIsGenerating(true);
+    setCode("");
+
+    try {
+      await streamChat(
+        `/api/meetings/${meetingId}/generate-code`,
+        {},
+        (data) => {
+          if (data.type === "chunk" && data.content) {
+            setCode(prev => prev + data.content);
+          }
+          if (data.type === "error") {
+            setIsGenerating(false);
+          }
+        },
+        () => {
+          setIsGenerating(false);
+        }
+      );
+    } catch {
+      setIsGenerating(false);
+    }
+  }, [meetingId, isGenerating]);
+
+  useEffect(() => {
+    if (codeEndRef.current) {
+      codeEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [code]);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [code]);
+
+  const fileBlocks = code.split(/\/\/ === FILE: /g).filter(Boolean);
+  const hasMultipleFiles = fileBlocks.length > 1 || code.includes("// === FILE:");
+
+  return (
+    <div className="h-full flex flex-col">
+      <div className="p-3 border-b border-border flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <Code2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+          <span className="text-xs font-semibold text-foreground">Coding Agent</span>
+          {isGenerating && (
+            <Badge variant="outline" className="text-[10px] animate-pulse text-emerald-400 border-emerald-500/30">
+              Generating...
+            </Badge>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {code && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCopy}
+              className="h-7 px-2 text-xs"
+              data-testid="button-copy-code"
+            >
+              {copied ? <Check className="w-3 h-3 mr-1 text-green-400" /> : <Copy className="w-3 h-3 mr-1" />}
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          )}
+          {meetingStatus === "active" && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleGenerate}
+              disabled={isGenerating || !meetingId}
+              className="h-7 px-3 text-xs"
+              data-testid="button-generate-code"
+            >
+              {isGenerating ? (
+                <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+              ) : (
+                <Play className="w-3 h-3 mr-1" />
+              )}
+              Generate
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto">
+        {!code && !isGenerating ? (
+          <div className="flex flex-col items-center justify-center h-full text-center px-6">
+            <div className="w-12 h-12 rounded-full bg-emerald-500/10 flex items-center justify-center mb-3">
+              <FileCode className="w-6 h-6 text-emerald-400" />
+            </div>
+            <p className="text-sm font-medium text-foreground mb-1">Coding Agent</p>
+            <p className="text-xs text-muted-foreground max-w-md">
+              Discuss technical decisions, then click Generate to create implementation code based on the meeting context.
+            </p>
+            <p className="text-xs text-muted-foreground mt-2">
+              Code is also auto-generated when you end the meeting.
+            </p>
+          </div>
+        ) : (
+          <div className="p-3">
+            {hasMultipleFiles ? (
+              <div className="space-y-3">
+                {fileBlocks.map((block, i) => {
+                  const lines = block.split("\n");
+                  const fileName = i === 0 && !code.startsWith("// === FILE:") ? null : lines[0]?.replace(/\s*===\s*$/, "").trim();
+                  const content = fileName ? lines.slice(1).join("\n").trim() : block.trim();
+                  return (
+                    <div key={i} className="rounded-md border border-border overflow-hidden">
+                      {fileName && (
+                        <div className="px-3 py-1.5 bg-muted border-b border-border flex items-center gap-2">
+                          <FileCode className="w-3 h-3 text-muted-foreground" />
+                          <span className="text-[11px] font-mono text-foreground">{fileName}</span>
+                        </div>
+                      )}
+                      <pre className="p-3 text-[12px] font-mono text-foreground bg-black/20 overflow-x-auto whitespace-pre-wrap leading-relaxed" data-testid={`code-block-${i}`}>
+                        {content}
+                      </pre>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <pre className="p-3 text-[12px] font-mono text-foreground bg-black/20 rounded-md border border-border overflow-x-auto whitespace-pre-wrap leading-relaxed" data-testid="code-block-single">
+                {code}
+              </pre>
+            )}
+            {isGenerating && (
+              <span className="inline-block w-1.5 h-4 bg-emerald-400 animate-pulse ml-0.5" />
+            )}
+            <div ref={codeEndRef} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function LiveCanvas({
   worldState,
   mermaidSpec,
@@ -227,6 +377,8 @@ export default function LiveCanvas({
   counterfactuals,
   isUpdating,
   userId,
+  meetingId,
+  meetingStatus,
 }: LiveCanvasProps) {
   const hasContent = worldState && (
     worldState.options.length > 0 ||
@@ -268,6 +420,10 @@ export default function LiveCanvas({
               <Shield className="w-3 h-3 mr-1" />
               Assumptions
             </TabsTrigger>
+            <TabsTrigger value="code" className="text-xs" data-testid="canvas-tab-code">
+              <Code2 className="w-3 h-3 mr-1" />
+              Code
+            </TabsTrigger>
             <TabsTrigger value="browser" className="text-xs" data-testid="canvas-tab-browser">
               <Monitor className="w-3 h-3 mr-1" />
               Browser
@@ -299,6 +455,10 @@ export default function LiveCanvas({
 
           <TabsContent value="assumptions" className="flex-1 overflow-auto m-0 mt-0">
             {worldState && <AssumptionPanel assumptions={worldState.assumptions} />}
+          </TabsContent>
+
+          <TabsContent value="code" className="flex-1 overflow-hidden m-0 mt-0">
+            <CodePanel meetingId={meetingId} meetingStatus={meetingStatus} worldState={worldState} />
           </TabsContent>
 
           <TabsContent value="browser" className="flex-1 overflow-hidden m-0 mt-0">

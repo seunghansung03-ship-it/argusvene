@@ -751,6 +751,79 @@ RULES:
     }
   });
 
+  app.post("/api/meetings/:id/generate-code", async (req, res) => {
+    const meetingId = parseInt(req.params.id);
+    let aborted = false;
+    res.on("close", () => { aborted = true; });
+
+    try {
+      const meeting = await storage.getMeeting(meetingId);
+      if (!meeting) return res.status(404).json({ error: "Not found" });
+
+      const messages = await storage.getMeetingMessages(meetingId);
+      const worldState = meeting.worldState as WorldState | null;
+      const provider = (meeting.aiProvider || "gemini") as AIProvider;
+      const aiClient = getAIClient(provider);
+
+      const transcript = messages.slice(-20).map(m => `[${m.senderName}]: ${m.content}`).join("\n\n");
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+
+      let fullCode = "";
+
+      for await (const chunk of aiClient.chatStream([
+        {
+          role: "system",
+          content: `You are the Coding Agent for ArgusVene, an AI co-founder engine. Based on the meeting discussion and WorldState, generate implementation code.
+
+Rules:
+- Generate working, production-ready code based on the decisions and technical discussions
+- Use appropriate language/framework based on context (default: TypeScript/React if not specified)
+- Include file paths as comments at the top of each file section (e.g., // === FILE: src/components/Feature.tsx ===)
+- Separate multiple files with clear markers
+- Include brief inline comments explaining key logic
+- Focus on the most recent decisions and action items
+- If the discussion is non-technical, generate relevant configuration, data models, or scaffolding
+- Output clean, well-structured code ready to use`
+        },
+        {
+          role: "user",
+          content: `Meeting: "${meeting.title}"\n\nWorldState:\n${worldState ? JSON.stringify(worldState, null, 2) : "None"}\n\nRecent Transcript:\n${transcript || "No messages yet"}\n\nGenerate implementation code based on these discussions and decisions.`
+        }
+      ])) {
+        if (aborted) break;
+        if (chunk.content) {
+          fullCode += chunk.content;
+          res.write(`data: ${JSON.stringify({ type: "chunk", content: chunk.content })}\n\n`);
+        }
+      }
+
+      if (!aborted) {
+        const saved = await storage.createArtifact({
+          meetingId,
+          workspaceId: meeting.workspaceId,
+          type: "code",
+          title: `Code: ${meeting.title} (v${(worldState?.version || 0) + 1})`,
+          content: fullCode,
+        });
+
+        res.write(`data: ${JSON.stringify({ type: "complete", artifact: saved })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+        res.end();
+      }
+    } catch (error) {
+      console.error("Code generation error:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to generate code" });
+      } else if (!aborted) {
+        res.write(`data: ${JSON.stringify({ type: "error", error: "Code generation failed" })}\n\n`);
+        res.end();
+      }
+    }
+  });
+
   app.post("/api/meetings/:id/summarize", async (req, res) => {
     const meetingId = parseInt(req.params.id);
     let aborted = false;
@@ -836,6 +909,58 @@ Include WorldState context in your analysis. Be thorough and extract every actio
 
       if (!aborted) {
         res.write(`data: ${JSON.stringify({ type: "summary", artifacts: savedArtifacts, decisions: savedDecisions, tasks: savedTasks })}\n\n`);
+      }
+
+      if (!aborted) {
+        try {
+          res.write(`data: ${JSON.stringify({ type: "code_start" })}\n\n`);
+
+          let fullCode = "";
+          for await (const chunk of aiClient.chatStream([
+            {
+              role: "system",
+              content: `You are the Coding Agent for ArgusVene. Based on the completed meeting's decisions and WorldState, generate complete implementation code.
+
+Rules:
+- Generate working, production-ready code implementing the decisions made
+- Use appropriate language/framework based on context (default: TypeScript/React)
+- Mark file paths clearly: // === FILE: path/to/file.ts ===
+- Include all necessary imports, types, and logic
+- Be comprehensive — this code should be ready to use
+- If the meeting was non-technical, generate data models, configs, or API schemas instead
+- Output clean, well-structured, immediately usable code`
+            },
+            {
+              role: "user",
+              content: `Meeting: "${meeting.title}"\n\nDecisions:\n${JSON.stringify(parsed.decisions || [], null, 2)}\n\nWorldState:\n${worldState ? JSON.stringify(worldState, null, 2) : "None"}\n\nTranscript:\n${transcript}\n\nGenerate complete implementation code.`
+            }
+          ])) {
+            if (aborted) break;
+            if (chunk.content) {
+              fullCode += chunk.content;
+              res.write(`data: ${JSON.stringify({ type: "code_chunk", content: chunk.content })}\n\n`);
+            }
+          }
+
+          if (!aborted && fullCode.trim()) {
+            const codeArtifact = await storage.createArtifact({
+              meetingId,
+              workspaceId: meeting.workspaceId,
+              type: "code",
+              title: `Implementation: ${meeting.title}`,
+              content: fullCode,
+            });
+            res.write(`data: ${JSON.stringify({ type: "code_complete", artifact: codeArtifact })}\n\n`);
+          }
+        } catch (codeError) {
+          console.error("Post-meeting code generation error:", codeError);
+          if (!aborted) {
+            res.write(`data: ${JSON.stringify({ type: "code_error", error: "Code generation skipped" })}\n\n`);
+          }
+        }
+      }
+
+      if (!aborted) {
         res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
         res.end();
       }

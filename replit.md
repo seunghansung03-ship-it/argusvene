@@ -48,6 +48,12 @@ ArgusVene is a Live AI Decision Participant (co-founder) built for the Gemini Li
 - Assumption Panel (confidence bars, challenge tracking)
 - Counterfactual display
 - Real-time updates via SSE
+- **Coding Agent (Code tab)**: AI code generation based on meeting context
+  - "Generate" button: streams code via `/api/meetings/:id/generate-code` during active meeting
+  - Multi-file display: parses `// === FILE: path ===` markers into separate code blocks
+  - Copy all generated code to clipboard
+  - Auto-generated during meeting end (Consensus Engine) and saved as code artifact
+  - Code artifacts visible in workspace Artifacts tab with dedicated code viewer
 - **UI Navigator (Browser Panel)**: Playwright-powered headless browser with Gemini Vision
   - Per-user browser session isolation via `BrowserContext`
   - WebSocket screenshot streaming (`/ws/browser?userId=xxx`)
