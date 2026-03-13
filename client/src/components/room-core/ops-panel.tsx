@@ -78,9 +78,8 @@ export function OpsPanel({
   return (
     <section className="flex h-full min-h-0 flex-col rounded-2xl border border-slate-200 bg-white">
       <div className="border-b border-slate-200 px-5 py-4">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Operator rail</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Controls</p>
         <h2 className="mt-1 text-lg font-semibold text-slate-950">Run the room</h2>
-        <p className="mt-1 text-sm text-slate-600">Choose the lead, activate agents, invite people, and trigger the next move.</p>
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -89,7 +88,6 @@ export function OpsPanel({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-slate-900">Active work order</p>
-                <p className="mt-1 text-xs text-slate-500">Keep the room pointed at one inspectable next move.</p>
               </div>
               <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
                 {room.meeting.status}
@@ -126,7 +124,7 @@ export function OpsPanel({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-sm font-semibold text-slate-900">Command deck</p>
-                <p className="mt-1 text-xs text-slate-500">{targetAgent ? `${targetAgent.name} is targeted.` : "Commands address the lead or whole room."}</p>
+                <p className="mt-1 text-xs text-slate-500">{targetAgent ? `${targetAgent.name} selected` : "Whole room selected"}</p>
               </div>
               <button type="button" onClick={() => onTargetAgent(null)} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100">
                 Clear focus
@@ -166,7 +164,7 @@ export function OpsPanel({
           <section>
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4 text-sky-600" />
-              <p className="text-sm font-semibold text-slate-900">Present now</p>
+              <p className="text-sm font-semibold text-slate-900">Live people</p>
             </div>
             <div className="mt-3 space-y-2">
               {room.presence.length === 0 ? (

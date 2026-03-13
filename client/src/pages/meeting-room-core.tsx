@@ -429,7 +429,7 @@ export default function MeetingRoomCorePage() {
   if (error) {
     const message = error instanceof Error ? error.message : "Could not load this meeting room.";
     return (
-      <div className="min-h-screen bg-[#f4f5f7] px-6 py-10">
+      <div className="min-h-screen bg-slate-50 px-6 py-10">
         <div className="mx-auto max-w-3xl rounded-2xl border border-rose-200 bg-white p-8">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-600">Room unavailable</div>
           <h1 className="mt-2 text-2xl font-semibold text-slate-950">The meeting room could not be loaded.</h1>
@@ -444,7 +444,7 @@ export default function MeetingRoomCorePage() {
 
   if (isLoading || !room) {
     return (
-      <div className="min-h-screen bg-[#f4f5f7] px-6 py-6">
+      <div className="min-h-screen bg-slate-50 px-6 py-6">
         <div className="mx-auto max-w-[1600px] space-y-4">
           <Skeleton className="h-28 rounded-2xl" />
           <div className="grid gap-4 xl:grid-cols-[360px,minmax(0,1fr),360px]">
@@ -458,9 +458,9 @@ export default function MeetingRoomCorePage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f4f5f7] text-slate-950">
+    <div className="min-h-screen bg-slate-50 text-slate-950">
       <div className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-[1600px] items-start justify-between gap-5 px-6 py-5">
+        <div className="mx-auto flex max-w-[1600px] items-start justify-between gap-5 px-6 py-4">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <Link href={room.workspace ? `/workspace/${room.workspace.id}` : "/"}>
@@ -473,8 +473,7 @@ export default function MeetingRoomCorePage() {
               <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">voice {geminiLive.status}</div>
               {runtimePreviewUrl ? <div className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">preview ready</div> : null}
             </div>
-            <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">{room.meeting.title}</h1>
-            <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">Live conversation, active agents, shared work order, and direct build-review-revise loops.</p>
+            <h1 className="mt-3 text-2xl font-semibold tracking-[-0.03em] text-slate-950">{room.meeting.title}</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700">
@@ -501,7 +500,7 @@ export default function MeetingRoomCorePage() {
         </div>
       </div>
 
-      <div className="mx-auto grid max-w-[1600px] gap-4 px-6 py-4 xl:grid-cols-[360px,minmax(0,1fr),360px]">
+      <div className="mx-auto grid max-w-[1600px] gap-4 px-6 py-4 xl:grid-cols-[340px,minmax(0,1fr),340px]">
         <div className="min-h-[80vh] xl:h-[calc(100vh-160px)]">
           <TranscriptPanel
             workOrder={room.workOrder}

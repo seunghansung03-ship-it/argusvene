@@ -98,18 +98,16 @@ export function TranscriptPanel({
       <div className="border-b border-slate-200 px-5 py-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Transcript lane</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Transcript</p>
             <h2 className="mt-1 text-lg font-semibold text-slate-950">Talk to the room</h2>
-            <p className="mt-1 text-sm text-slate-600">Voice and direct instructions live in the same lane.</p>
           </div>
           <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
             voice {liveStatus}
           </div>
         </div>
 
-        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Current work order</p>
-          <p className="mt-2 text-sm leading-6 text-slate-800">{workOrder}</p>
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800">
+          {workOrder}
         </div>
 
         <div className="mt-4 grid gap-2 xl:grid-cols-2">
@@ -221,7 +219,7 @@ export function TranscriptPanel({
             className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
             onClick={() => setDraft(presetPrompt(mode, speechLocale))}
           >
-            Load mode prompt
+            Use preset
           </button>
           <span className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{messages.length} turns</span>
         </div>

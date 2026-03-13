@@ -3,10 +3,9 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { ThemeProvider, useTheme } from "@/components/theme-provider";
+import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
-import { Button } from "@/components/ui/button";
-import { Moon, Sun, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import OrganizationHomePage from "@/pages/organization-home";
 import OrganizationSettingsPage from "@/pages/organization-settings";
@@ -14,21 +13,6 @@ import WorkspacePrepPage from "@/pages/workspace-prep";
 import MeetingRoomCorePage from "@/pages/meeting-room-core";
 import OutcomesBoardPage from "@/pages/outcomes-board";
 import LoginPage from "@/pages/login";
-
-function ThemeToggle() {
-  const { theme, toggleTheme } = useTheme();
-  return (
-    <Button
-      data-testid="button-theme-toggle"
-      size="icon"
-      variant="ghost"
-      onClick={toggleTheme}
-      className="fixed top-4 right-14 z-50"
-    >
-      {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-    </Button>
-  );
-}
 
 function ProtectedRoutes() {
   const { user, loading } = useAuth();
@@ -63,7 +47,6 @@ function App() {
       <ThemeProvider>
         <AuthProvider>
           <TooltipProvider>
-            <ThemeToggle />
             <Toaster />
             <ProtectedRoutes />
           </TooltipProvider>

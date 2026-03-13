@@ -13,7 +13,6 @@ import { insertAgentPersonaSchema } from "@shared/schema";
 import { executeAction, getActionDescriptions, type ActionResult } from "./assistant-actions";
 import { executeMeetingAction, getMeetingActionDescriptions, type MeetingActionResult } from "./meeting-actions";
 import { registerRoomCoreRoutes } from "./room-core";
-import { registerRoomV2Routes } from "./room-v2";
 import { createSession, destroySession, navigateTo, performAction, getScreenshot, getCurrentUrl, hasSession, addScreenshotListener, type BrowserAction } from "./browser-manager";
 import { analyzeScreenshot, describeScreen } from "./browser-vision";
 import { getRuntimeContentType, injectBaseHref, parseRuntimeBundle, resolveRuntimeFile, type RuntimeBundle } from "./runtime-bundles";
@@ -425,7 +424,6 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   registerRoomCoreRoutes(app);
-  registerRoomV2Routes(app);
 
   app.get("/api/providers", (_req, res) => {
     res.json({

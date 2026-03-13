@@ -21,9 +21,9 @@ export function ProductShell({
   children,
 }: ProductShellProps) {
   return (
-    <div className="min-h-screen bg-[#f4f5f7] text-slate-950">
+    <div className="min-h-screen bg-slate-50 text-slate-950">
       <div className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-5 py-3 md:px-7">
+        <div className="mx-auto flex max-w-[1200px] items-center justify-between gap-4 px-5 py-3 md:px-6">
           <div className="flex items-center gap-3">
             {backHref ? (
               <Link href={backHref}>
@@ -35,8 +35,7 @@ export function ProductShell({
             ) : null}
             <Link href="/">
               <button type="button" className="text-left">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">ArgusVene</div>
-                <div className="text-sm font-semibold text-slate-900">Live meeting operating system</div>
+                <div className="text-sm font-semibold text-slate-900">ArgusVene</div>
               </button>
             </Link>
           </div>
@@ -53,10 +52,10 @@ export function ProductShell({
         </div>
       </div>
 
-      <div className="mx-auto max-w-[1500px] px-5 py-6 md:px-7">
-        <header className="mb-6">
-          <h1 className="text-3xl font-semibold tracking-[-0.04em] text-slate-950">{title}</h1>
-          {description ? <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-600">{description}</p> : null}
+      <div className="mx-auto max-w-[1200px] px-5 py-6 md:px-6">
+        <header className="mb-5">
+          <h1 className="text-2xl font-semibold tracking-[-0.03em] text-slate-950">{title}</h1>
+          {description ? <p className="mt-1 text-sm text-slate-600">{description}</p> : null}
         </header>
         {children}
       </div>

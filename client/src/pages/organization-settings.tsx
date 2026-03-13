@@ -107,7 +107,7 @@ export default function OrganizationSettingsPage() {
   return (
     <ProductShell
       title="Organization settings"
-      description="Manage the shared agent library and room defaults used across workspaces."
+      description="Manage shared agents and the default provider."
       backHref="/"
       backLabel="Home"
     >

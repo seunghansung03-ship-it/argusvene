@@ -5,7 +5,7 @@
 이 문서는 `무엇을 만들 것인가`, `무엇을 만들지 않을 것인가`, `무엇을 재사용하지 않을 것인가`를 고정해서,
 ArgusVene를 사실상 새 제품으로 다시 만들기 위한 기준 문서다.
 
-이 문서는 [PRODUCT_V3.md](/Users/seongseunghan/Desktop/argusvenepro/PRODUCT_V3.md)를 대체한다.
+이 문서는 이전 제품 초안을 대체한다.
 
 ## 1. 제품 한 줄 정의
 
@@ -42,7 +42,7 @@ ArgusVene는 여러 명의 사람이 같은 라이브 회의실에 들어와 AI 
 
 이번 리셋의 절대 조건은 아래 두 가지다.
 
-- `Replit에서 급히 만든 임시 프로그램 계보를 재사용하지 않는다`
+- `기존 임시 프로그램 계보를 재사용하지 않는다`
 - `목업 없이 바로 사용 가능한 실제 제품만 만든다`
 
 이 말의 의미는 단순히 파일 이름이나 UI 일부를 버린다는 뜻이 아니다.
@@ -373,10 +373,10 @@ ArgusVene는 `공유 룸 상태`를 가지는 협업 시스템이어야 한다.
 
 다음은 새 제품의 기반으로 재사용하지 않는다.
 
-이 목록은 곧 `Replit에서 급히 만든 임시 프로그램 계보 전체`를 뜻한다.
+이 목록은 곧 `기존 임시 프로그램 계보 전체`를 뜻한다.
 
 - 기존 room UI 전체
-- `room-v2`, `room-v3`, `room-v4`의 화면 계보
+- 이전 실험용 room 화면 계보
 - 기존 meeting orchestration 전체
 - `dev auth bypass`
 - legacy `/api/meetings/:id/voice`
@@ -392,7 +392,7 @@ ArgusVene는 `공유 룸 상태`를 가지는 협업 시스템이어야 한다.
 
 `임시 제품에서 시작해 개선하는 것이 아니라, 새 제품을 정의한 뒤 필요한 인프라만 제한적으로 가져온다.`
 
-## 14. OpenClaw와 Replit에서 참고할 것
+## 14. OpenClaw와 기존 툴에서 참고할 것
 
 ### 14.1 OpenClaw에서 참고
 
@@ -419,9 +419,9 @@ OpenClaw 공식 문서에서 확인한 참고 포인트:
 - VISION은 better computer-use and agent harness capabilities를 다음 우선순위로 둔다.
 - VISION은 optional capability를 plugin으로 두고 core는 lean하게 유지하라고 말한다.
 
-### 14.2 Replit에서 참고
+### 14.2 기존 툴에서 참고
 
-Replit에서 참고할 것은 `IDE UI`가 아니라 다음 루프다.
+참고할 것은 `IDE UI`가 아니라 다음 루프다.
 
 - generate
 - run
@@ -432,7 +432,7 @@ Replit에서 참고할 것은 `IDE UI`가 아니라 다음 루프다.
 
 가져오지 않을 것:
 
-- Replit의 전체 제품 구조
+- 기존 툴의 전체 제품 구조
 - IDE형 복잡한 chrome
 - 개발자 전용 인터페이스
 

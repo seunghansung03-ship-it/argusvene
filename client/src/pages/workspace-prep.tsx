@@ -1,17 +1,16 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useParams } from "wouter";
-import { ArrowRight, FileUp, MailPlus, Mic, Trash2, Users } from "lucide-react";
+import { FileUp, MailPlus, Mic, Trash2, Users } from "lucide-react";
 import { ProductShell } from "@/components/product-shell";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 import { apiFetchJson, apiRequest, getAuthHeaders, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { AgentPersona, Artifact, Decision, Meeting, Task, Workspace, WorkspaceFile, WorkspaceMember } from "@shared/schema";
+import type { AgentPersona, Meeting, Workspace, WorkspaceFile, WorkspaceMember } from "@shared/schema";
 
 export default function WorkspacePrepPage() {
   const params = useParams<{ id: string }>();
@@ -34,18 +33,6 @@ export default function WorkspacePrepPage() {
   const { data: meetings } = useQuery<Meeting[]>({
     queryKey: ["/api/workspaces", workspaceId, "meetings"],
     queryFn: () => apiFetchJson(`/api/workspaces/${workspaceId}/meetings`),
-  });
-  const { data: artifacts } = useQuery<Artifact[]>({
-    queryKey: ["/api/workspaces", workspaceId, "artifacts"],
-    queryFn: () => apiFetchJson(`/api/workspaces/${workspaceId}/artifacts`),
-  });
-  const { data: decisions } = useQuery<Decision[]>({
-    queryKey: ["/api/workspaces", workspaceId, "decisions"],
-    queryFn: () => apiFetchJson(`/api/workspaces/${workspaceId}/decisions`),
-  });
-  const { data: tasks } = useQuery<Task[]>({
-    queryKey: ["/api/workspaces", workspaceId, "tasks"],
-    queryFn: () => apiFetchJson(`/api/workspaces/${workspaceId}/tasks`),
   });
   const { data: agents } = useQuery<AgentPersona[]>({
     queryKey: ["/api/agents"],
@@ -134,55 +121,68 @@ export default function WorkspacePrepPage() {
   return (
     <ProductShell
       title={workspace?.name || "Workspace prep"}
-      description={workspace?.description || "Prepare the people, files, and default agents before the room goes live."}
+      description={workspace?.description || "Prepare the room, the people, and the files."}
       backHref="/"
       backLabel="Home"
       actions={
-        activeMeeting ? (
-          <Link href={`/meeting/${activeMeeting.id}`}>
-            <Button className="rounded-full">
-              <Mic className="h-4 w-4" />
-              Re-enter live room
+        <>
+          <Link href={`/workspace/${workspaceId}/outcomes`}>
+            <Button variant="outline" className="rounded-full">
+              Outcomes
             </Button>
           </Link>
-        ) : null
+          {activeMeeting ? (
+            <Link href={`/meeting/${activeMeeting.id}`}>
+              <Button className="rounded-full">
+                <Mic className="h-4 w-4" />
+                Re-enter room
+              </Button>
+            </Link>
+          ) : null}
+        </>
       }
     >
-      <div className="grid gap-6 xl:grid-cols-[1.1fr,0.9fr]">
-        <div className="space-y-6">
-          <Card className="rounded-2xl border-slate-200 p-5">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Open room</div>
-            <h2 className="mt-1 text-lg font-semibold text-slate-950">Prepare the next live session</h2>
-            <div className="mt-4 space-y-4">
-              <Input value={roomTitle} onChange={(event) => setRoomTitle(event.target.value)} placeholder="Decision or meeting topic" />
-              <ScrollArea className="h-56 rounded-2xl border border-slate-200">
-                <div className="space-y-2 p-3">
-                  {agents?.map((agent) => (
-                    <button
-                      key={agent.id}
-                      type="button"
-                      onClick={() => toggleAgent(agent.id)}
-                      className={`flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition ${selectedAgentIds.includes(agent.id) ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-slate-50 text-slate-900 hover:bg-slate-100"}`}
-                    >
-                      <Checkbox checked={selectedAgentIds.includes(agent.id)} />
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold">{agent.name}</p>
-                        <p className={`text-xs ${selectedAgentIds.includes(agent.id) ? "text-slate-300" : "text-slate-500"}`}>{agent.role}</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </ScrollArea>
-              <Button className="w-full rounded-xl" disabled={!roomTitle.trim() || selectedAgentIds.length === 0 || openingRoom} onClick={openRoom}>
-                {openingRoom ? "Opening..." : "Open live room"}
-              </Button>
-            </div>
-          </Card>
+      <div className="space-y-6">
+        <Card className="rounded-2xl border-slate-200 p-5">
+          <div className="mb-4 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+            <span>{members?.length || 0} invited</span>
+            <span className="text-slate-300">/</span>
+            <span>{files?.length || 0} files</span>
+            <span className="text-slate-300">/</span>
+            <span>{meetings?.length || 0} meetings</span>
+            {activeMeeting ? <span className="ml-auto rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-700">Live room open</span> : null}
+          </div>
+          <div className="space-y-4">
+            <Input value={roomTitle} onChange={(event) => setRoomTitle(event.target.value)} placeholder="Decision or meeting topic" />
+            <ScrollArea className="h-56 rounded-2xl border border-slate-200">
+              <div className="space-y-2 p-3">
+                {agents?.map((agent) => (
+                  <button
+                    key={agent.id}
+                    type="button"
+                    onClick={() => toggleAgent(agent.id)}
+                    className={`flex w-full items-center gap-3 rounded-2xl border px-3 py-3 text-left transition ${selectedAgentIds.includes(agent.id) ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-slate-50 text-slate-900 hover:bg-slate-100"}`}
+                  >
+                    <Checkbox checked={selectedAgentIds.includes(agent.id)} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">{agent.name}</p>
+                      <p className={`text-xs ${selectedAgentIds.includes(agent.id) ? "text-slate-300" : "text-slate-500"}`}>{agent.role}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </ScrollArea>
+            <Button className="w-full rounded-xl" disabled={!roomTitle.trim() || selectedAgentIds.length === 0 || openingRoom} onClick={openRoom}>
+              {openingRoom ? "Opening..." : "Open room"}
+            </Button>
+          </div>
+        </Card>
 
+        <div className="grid gap-6 xl:grid-cols-2">
           <Card className="rounded-2xl border-slate-200 p-5">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
               <Users className="h-4 w-4 text-sky-600" />
-              Humans
+              People
             </div>
             <div className="mt-4 flex gap-2">
               <Input value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="Invite teammate by email" />
@@ -229,52 +229,6 @@ export default function WorkspacePrepPage() {
                   <button type="button" onClick={() => deleteFile(file.id)} className="rounded-full border border-slate-200 bg-white p-2 text-slate-500 hover:bg-slate-100">
                     <Trash2 className="h-4 w-4" />
                   </button>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-
-        <div className="space-y-6">
-          <Card className="rounded-2xl border-slate-200 p-5">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Current status</div>
-            <div className="mt-3 text-lg font-semibold text-slate-950">{activeMeeting ? activeMeeting.title : "No live room active"}</div>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              {activeMeeting ? "The team can jump straight back into the room." : "Pick the specialists, attach the relevant files, then open the room when the team is ready."}
-            </p>
-          </Card>
-
-          <Card className="rounded-2xl border-slate-200 p-5">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Recent outputs</div>
-            <div className="mt-4 space-y-3">
-              {artifacts?.slice(0, 3).map((artifact) => (
-                <div key={artifact.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-sm font-medium text-slate-900">{artifact.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">{artifact.type}</p>
-                </div>
-              ))}
-            </div>
-            <Link href={`/workspace/${workspaceId}/outcomes`}>
-              <Button variant="outline" className="mt-4 w-full rounded-xl">
-                Review outcomes
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
-          </Card>
-
-          <Card className="rounded-2xl border-slate-200 p-5">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Recent decisions and tasks</div>
-            <div className="mt-4 space-y-3">
-              {decisions?.slice(0, 2).map((decision) => (
-                <div key={decision.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-sm font-medium text-slate-900">{decision.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">decision</p>
-                </div>
-              ))}
-              {tasks?.slice(0, 2).map((task) => (
-                <div key={task.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <p className="text-sm font-medium text-slate-900">{task.title}</p>
-                  <p className="mt-1 text-xs text-slate-500">{task.status}</p>
                 </div>
               ))}
             </div>

@@ -83,7 +83,7 @@ export default function OutcomesBoardPage() {
   return (
     <ProductShell
       title={`${workspace?.name || "Workspace"} outcomes`}
-      description="Review what the room decided, what must happen next, and which artifacts are ready to inspect."
+      description="Review decisions, tasks, and artifacts."
       backHref={`/workspace/${workspaceId}`}
       backLabel="Workspace"
       actions={

@@ -31,11 +31,6 @@ function currentDraft(room: RoomCoreState, prototypeDraft: string) {
   return latest?.content || "";
 }
 
-function snippet(value: string, max = 180) {
-  const flat = value.replace(/\s+/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, max)}...` : flat;
-}
-
 export function WorkbenchPanel({
   room,
   view,
@@ -61,7 +56,6 @@ export function WorkbenchPanel({
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-500">Live canvas</p>
             <h2 className="mt-1 text-xl font-semibold text-slate-950">Build and inspect</h2>
-            <p className="mt-1 text-sm text-slate-600">This panel holds the actual work object the room is discussing.</p>
           </div>
           <div className="flex items-center gap-2">
             {(["draft", "preview"] as WorkbenchView[]).map((option) => (
@@ -124,14 +118,13 @@ export function WorkbenchPanel({
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(0,1fr),320px]">
-        <div className="min-h-0 border-b border-slate-200 xl:border-r xl:border-b-0">
+      <div className="min-h-0 flex-1">
+        <div className="flex h-full min-h-0 flex-col">
           {view === "preview" && runtimePreviewUrl ? (
-            <div className="flex h-full min-h-0 flex-col">
+            <>
               <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Runnable preview</p>
-                  <p className="text-xs text-slate-500">Inspect the product directly, then bring critique back into the room.</p>
                 </div>
                 <a href={runtimePreviewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100">
                   Open
@@ -139,13 +132,12 @@ export function WorkbenchPanel({
                 </a>
               </div>
               <iframe title="Runtime preview" src={runtimePreviewUrl} className="min-h-0 flex-1 bg-white" />
-            </div>
+            </>
           ) : (
-            <div className="flex h-full min-h-0 flex-col">
+            <>
               <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
                 <div>
                   <p className="text-sm font-semibold text-slate-900">Current work object</p>
-                  <p className="text-xs text-slate-500">This is what the room is currently building or reviewing.</p>
                 </div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700">
                   <FileCode2 className="h-3.5 w-3.5" />
@@ -161,53 +153,9 @@ export function WorkbenchPanel({
                   Generate a concrete draft so the room has something real to inspect.
                 </div>
               )}
-            </div>
+            </>
           )}
         </div>
-
-        <ScrollArea className="min-h-0 bg-slate-50/80">
-          <div className="space-y-6 px-5 py-5">
-            <section>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Recent artifacts</p>
-              <div className="mt-3 space-y-2">
-                {room.recentArtifacts.slice(0, 4).map((artifact) => (
-                  <div key={artifact.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-medium text-slate-900">{artifact.title}</p>
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{artifact.type}</span>
-                    </div>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">{snippet(artifact.content)}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-            <section>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Decisions</p>
-              <div className="mt-3 space-y-2">
-                {room.recentDecisions.slice(0, 3).map((decision) => (
-                  <div key={decision.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                    <p className="text-sm font-medium text-slate-900">{decision.title}</p>
-                    <p className="mt-2 text-sm leading-6 text-slate-600">{snippet(decision.description)}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-            <section>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Tasks</p>
-              <div className="mt-3 space-y-2">
-                {room.recentTasks.slice(0, 3).map((task) => (
-                  <div key={task.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-medium text-slate-900">{task.title}</p>
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{task.status}</span>
-                    </div>
-                    {task.description ? <p className="mt-2 text-sm leading-6 text-slate-600">{snippet(task.description)}</p> : null}
-                  </div>
-                ))}
-              </div>
-            </section>
-          </div>
-        </ScrollArea>
       </div>
     </section>
   );
