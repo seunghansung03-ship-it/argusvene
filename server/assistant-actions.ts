@@ -1,5 +1,8 @@
 import { storage } from "./storage";
 import type { InsertWorkspace, InsertAgentPersona } from "@shared/schema";
+import fs from "fs";
+import path from "path";
+import pdf from "pdf-parse";
 
 export interface ActionResult {
   action: string;
@@ -48,6 +51,16 @@ const AVAILABLE_ACTIONS = [
     name: "update_agent",
     description: "Update an existing agent's settings",
     params: "id (required number), plus any: name, role, systemPrompt, color, voiceId",
+  },
+  {
+    name: "list_workspace_files",
+    description: "List uploaded files in a workspace",
+    params: "workspaceId (required number)",
+  },
+  {
+    name: "read_workspace_file",
+    description: "Read the contents of an uploaded file",
+    params: "fileId (required number)",
   },
 ];
 
@@ -160,6 +173,56 @@ export async function executeAction(actionName: string, params: Record<string, a
         const updated = await storage.updateAgentPersona(id, updates);
         if (!updated) return { action: actionName, success: false, message: `Agent ID ${id} not found` };
         return { action: actionName, success: true, message: `Agent "${updated.name}" updated`, data: updated };
+      }
+
+      case "list_workspace_files": {
+        if (!params.workspaceId) {
+          return { action: actionName, success: false, message: "workspaceId is required" };
+        }
+        const files = await storage.getWorkspaceFiles(params.workspaceId);
+        return {
+          action: actionName,
+          success: true,
+          message: files.length === 0
+            ? "No files found in this workspace."
+            : `Found ${files.length} file(s):\n${files.map(f => `  - [ID:${f.id}] ${f.originalName} (${f.mimeType}, ${Math.round(f.size / 1024)}KB)`).join("\n")}`,
+          data: files,
+        };
+      }
+
+      case "read_workspace_file": {
+        if (!params.fileId) {
+          return { action: actionName, success: false, message: "fileId is required" };
+        }
+        const file = await storage.getWorkspaceFile(params.fileId);
+        if (!file) return { action: actionName, success: false, message: `File ID ${params.fileId} not found` };
+
+        const fullPath = path.join(process.cwd(), "uploads", file.path);
+        if (!fs.existsSync(fullPath)) {
+          return { action: actionName, success: false, message: "File data not found on disk" };
+        }
+
+        let content = "";
+        try {
+          if (file.mimeType === "application/pdf") {
+            const dataBuffer = fs.readFileSync(fullPath);
+            const pdfData = await pdf(dataBuffer);
+            content = pdfData.text;
+          } else if (file.mimeType.startsWith("text/") || file.mimeType === "application/json") {
+            content = fs.readFileSync(fullPath, "utf-8");
+          } else {
+            return { action: actionName, success: false, message: `Unsupported file type for reading: ${file.mimeType}` };
+          }
+        } catch (error: any) {
+          return { action: actionName, success: false, message: `Failed to read file: ${error.message}` };
+        }
+
+        return {
+          action: actionName,
+          success: true,
+          message: `Successfully read file ${file.originalName}`,
+          data: { content },
+        };
       }
 
       default:

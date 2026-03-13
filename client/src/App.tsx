@@ -8,9 +8,11 @@ import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Moon, Sun, Loader2 } from "lucide-react";
 import NotFound from "@/pages/not-found";
-import Dashboard from "@/pages/dashboard";
-import WorkspacePage from "@/pages/workspace";
-import MeetingRoom from "@/pages/meeting-room";
+import OrganizationHomePage from "@/pages/organization-home";
+import OrganizationSettingsPage from "@/pages/organization-settings";
+import WorkspacePrepPage from "@/pages/workspace-prep";
+import MeetingRoomCorePage from "@/pages/meeting-room-core";
+import OutcomesBoardPage from "@/pages/outcomes-board";
 import LoginPage from "@/pages/login";
 
 function ThemeToggle() {
@@ -45,9 +47,11 @@ function ProtectedRoutes() {
 
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
-      <Route path="/workspace/:id" component={WorkspacePage} />
-      <Route path="/meeting/:id" component={MeetingRoom} />
+      <Route path="/" component={OrganizationHomePage} />
+      <Route path="/org/settings" component={OrganizationSettingsPage} />
+      <Route path="/workspace/:id" component={WorkspacePrepPage} />
+      <Route path="/workspace/:id/outcomes" component={OutcomesBoardPage} />
+      <Route path="/meeting/:id" component={MeetingRoomCorePage} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -2,7 +2,9 @@ import { useState, useRef, useCallback } from "react";
 
 interface GeminiLiveOptions {
   userId: string | null;
+  languageHint?: string;
   onTranscript?: (text: string) => void;
+  onTurnComplete?: (text: string) => void;
   onAudioStart?: () => void;
   onAudioEnd?: () => void;
   onError?: (message: string) => void;
@@ -12,11 +14,13 @@ interface GeminiLiveOptions {
 export type GeminiLiveStatus = "disconnected" | "connecting" | "connected" | "speaking" | "listening";
 
 export function useGeminiLive(options: GeminiLiveOptions) {
-  const { userId, onTranscript, onAudioStart, onAudioEnd, onError, onStatusChange } = options;
+  const { userId, languageHint, onTranscript, onTurnComplete, onAudioStart, onAudioEnd, onError, onStatusChange } = options;
 
   const [status, setStatus] = useState<GeminiLiveStatus>("disconnected");
   const [isConnected, setIsConnected] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
+  const [microphoneEnabled, setMicrophoneEnabled] = useState(true);
 
   const wsRef = useRef<WebSocket | null>(null);
   const captureContextRef = useRef<AudioContext | null>(null);
@@ -24,9 +28,13 @@ export function useGeminiLive(options: GeminiLiveOptions) {
   const workletNodeRef = useRef<AudioWorkletNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const meterFrameRef = useRef<number | null>(null);
   const playbackQueueRef = useRef<Float32Array[]>([]);
   const isPlayingRef = useRef(false);
   const playbackSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const currentTurnTextRef = useRef("");
+  const microphoneEnabledRef = useRef(true);
 
   const updateStatus = useCallback((s: GeminiLiveStatus) => {
     setStatus(s);
@@ -79,6 +87,41 @@ export function useGeminiLive(options: GeminiLiveOptions) {
     setIsSpeaking(false);
   }, []);
 
+  const stopMeter = useCallback(() => {
+    if (meterFrameRef.current !== null) {
+      cancelAnimationFrame(meterFrameRef.current);
+      meterFrameRef.current = null;
+    }
+    setMicLevel(0);
+  }, []);
+
+  const startMeter = useCallback(() => {
+    const analyser = analyserRef.current;
+    if (!analyser) return;
+
+    const samples = new Uint8Array(analyser.fftSize);
+
+    const tick = () => {
+      analyser.getByteTimeDomainData(samples);
+      if (!microphoneEnabledRef.current) {
+        setMicLevel(0);
+        meterFrameRef.current = requestAnimationFrame(tick);
+        return;
+      }
+      let sumSquares = 0;
+      for (let i = 0; i < samples.length; i++) {
+        const normalized = (samples[i] - 128) / 128;
+        sumSquares += normalized * normalized;
+      }
+      const rms = Math.sqrt(sumSquares / samples.length);
+      setMicLevel(Math.min(1, rms * 3));
+      meterFrameRef.current = requestAnimationFrame(tick);
+    };
+
+    stopMeter();
+    meterFrameRef.current = requestAnimationFrame(tick);
+  }, [stopMeter]);
+
   const connect = useCallback(async () => {
     if (!userId) {
       onError?.("Not authenticated");
@@ -107,12 +150,23 @@ export function useGeminiLive(options: GeminiLiveOptions) {
       const source = captureCtx.createMediaStreamSource(stream);
       sourceRef.current = source;
 
+      const analyser = captureCtx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.8;
+      analyserRef.current = analyser;
+      source.connect(analyser);
+      startMeter();
+
       const workletNode = new AudioWorkletNode(captureCtx, "pcm-capture-processor");
       workletNodeRef.current = workletNode;
       source.connect(workletNode);
 
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/gemini-live?userId=${encodeURIComponent(userId)}`);
+      const params = new URLSearchParams({ userId });
+      if (languageHint && languageHint !== "auto") {
+        params.set("lang", languageHint);
+      }
+      const ws = new WebSocket(`${protocol}//${window.location.host}/ws/gemini-live?${params.toString()}`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -126,10 +180,12 @@ export function useGeminiLive(options: GeminiLiveOptions) {
           switch (msg.type) {
             case "session_started":
               setIsConnected(true);
+              currentTurnTextRef.current = "";
+              onTranscript?.("");
               updateStatus("listening");
 
               workletNode.port.onmessage = (e) => {
-                if (e.data.type === "audio" && ws.readyState === WebSocket.OPEN) {
+                if (e.data.type === "audio" && microphoneEnabledRef.current && ws.readyState === WebSocket.OPEN) {
                   ws.send(JSON.stringify({
                     type: "audio",
                     data: e.data.data,
@@ -159,21 +215,31 @@ export function useGeminiLive(options: GeminiLiveOptions) {
 
             case "text":
               if (msg.content) {
-                onTranscript?.(msg.content);
+                currentTurnTextRef.current += msg.content;
+                onTranscript?.(currentTurnTextRef.current);
               }
               break;
 
             case "turn_complete":
+              if (currentTurnTextRef.current.trim()) {
+                onTurnComplete?.(currentTurnTextRef.current.trim());
+              }
+              currentTurnTextRef.current = "";
+              onTranscript?.("");
               updateStatus("listening");
               break;
 
             case "interrupted":
+              currentTurnTextRef.current = "";
+              onTranscript?.("");
               stopPlayback();
               updateStatus("listening");
               break;
 
             case "session_closed":
               setIsConnected(false);
+              currentTurnTextRef.current = "";
+              onTranscript?.("");
               updateStatus("disconnected");
               if (msg.message) {
                 console.warn("[gemini-live]", msg.message);
@@ -192,23 +258,31 @@ export function useGeminiLive(options: GeminiLiveOptions) {
       ws.onerror = (ev) => {
         console.error("[gemini-live] WebSocket error event:", ev);
         onError?.("Gemini Live WebSocket failed — check server logs for details");
+        currentTurnTextRef.current = "";
+        onTranscript?.("");
         updateStatus("disconnected");
       };
 
       ws.onclose = () => {
         setIsConnected(false);
+        currentTurnTextRef.current = "";
+        onTranscript?.("");
         updateStatus("disconnected");
       };
 
     } catch (error: any) {
       console.error("[gemini-live] Connection error:", error);
       onError?.(error.message || "Failed to connect");
+      currentTurnTextRef.current = "";
+      onTranscript?.("");
       updateStatus("disconnected");
+      stopMeter();
     }
-  }, [userId, onTranscript, onError, updateStatus, playAudioQueue, stopPlayback]);
+  }, [userId, languageHint, onTranscript, onTurnComplete, onError, updateStatus, playAudioQueue, stopPlayback, startMeter, stopMeter]);
 
   const disconnect = useCallback(() => {
     stopPlayback();
+    stopMeter();
 
     if (workletNodeRef.current) {
       workletNodeRef.current.disconnect();
@@ -218,6 +292,11 @@ export function useGeminiLive(options: GeminiLiveOptions) {
     if (sourceRef.current) {
       sourceRef.current.disconnect();
       sourceRef.current = null;
+    }
+
+    if (analyserRef.current) {
+      analyserRef.current.disconnect();
+      analyserRef.current = null;
     }
 
     if (streamRef.current) {
@@ -240,10 +319,21 @@ export function useGeminiLive(options: GeminiLiveOptions) {
       wsRef.current = null;
     }
 
+    currentTurnTextRef.current = "";
+    onTranscript?.("");
     setIsConnected(false);
     setIsSpeaking(false);
     updateStatus("disconnected");
-  }, [stopPlayback, updateStatus]);
+  }, [onTranscript, stopMeter, stopPlayback, updateStatus]);
+
+  const toggleMicrophone = useCallback(() => {
+    const next = !microphoneEnabledRef.current;
+    microphoneEnabledRef.current = next;
+    setMicrophoneEnabled(next);
+    if (!next) {
+      setMicLevel(0);
+    }
+  }, []);
 
   const sendText = useCallback((text: string) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -255,9 +345,12 @@ export function useGeminiLive(options: GeminiLiveOptions) {
     status,
     isConnected,
     isSpeaking,
+    microphoneEnabled,
+    micLevel,
     connect,
     disconnect,
     sendText,
     stopPlayback,
+    toggleMicrophone,
   };
 }

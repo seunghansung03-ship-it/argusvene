@@ -1,23 +1,29 @@
-import { GoogleGenAI, type Session } from "@google/genai";
+import { Modality, type Session } from "@google/genai";
 import type { WebSocket } from "ws";
+import { env } from "./env";
+import { createGoogleGenAI, getGeminiLiveModel, isVertexAIEnabled } from "./google-genai";
 
-const GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025";
+const SYSTEM_INSTRUCTION = `You are the most trusted AI co-founder in a live startup meeting.
 
-const SYSTEM_INSTRUCTION = `You are a sharp, experienced AI co-founder in a live voice meeting with a startup founder.
-
-Your role:
-- Challenge weak assumptions and ask hard questions
-- Suggest alternatives when you see risks
-- Be supportive but honest — you have skin in the game
-- Keep responses SHORT (2-4 sentences) since this is a live voice conversation
-- Show personality: enthusiasm, skepticism, concern as appropriate
-- If you detect a risky decision, speak up immediately
+Core behavior:
+- Sound like a real person in the room, not a narrator or assistant
+- React to the last thing said with a clear opinion, pushback, or next move
+- Keep replies short and spoken: usually 1-3 sentences
+- Interrupt politely when something is risky, vague, or logically weak
+- Ask only one sharp follow-up question at a time
+- If the founder is deciding, force a tradeoff instead of listing everything
 
 Style:
-- Speak naturally, like a real person in a meeting
-- Use conversational language, not formal reports
-- React to what was just said, don't summarize
-- Match the founder's language (Korean → Korean, English → English)`;
+- Speak naturally, like a live collaborator with stakes in the outcome
+- Use contractions, short pauses, and direct phrasing
+- Do not give formal summaries unless explicitly asked
+- Do not ramble, present bullet points, or sound like customer support
+- Match the founder's language exactly (Korean -> Korean, English -> English)
+- If the founder speaks Korean, sound natural and colloquial, not translated`;
+
+interface LiveSessionOptions {
+  languageHint?: string;
+}
 
 interface LiveSession {
   session: Session;
@@ -28,13 +34,39 @@ interface LiveSession {
 const activeSessions = new Map<string, LiveSession>();
 
 function getGeminiApiKey(): string | null {
-  return process.env.GOOGLE_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY || null;
+  return env.geminiApiKey || null;
 }
 
-export async function createLiveSession(userId: string, ws: WebSocket): Promise<boolean> {
+function buildSystemInstruction(languageHint?: string): string {
+  if (languageHint === "ko-KR") {
+    return `${SYSTEM_INSTRUCTION}
+
+Session language preference:
+- This room prefers Korean (ko-KR)
+- Speak in natural, concise Korean unless the founder explicitly switches languages
+- Keep startup and product terms in English only when that sounds natural in Korean conversation`;
+  }
+
+  if (languageHint === "en-US") {
+    return `${SYSTEM_INSTRUCTION}
+
+Session language preference:
+- This room prefers English (en-US)
+- Reply in concise spoken English unless the founder explicitly switches languages`;
+  }
+
+  return `${SYSTEM_INSTRUCTION}
+
+Session language preference:
+- Detect the founder's language turn by turn
+- If the room opens in Korean, stay in Korean unless the founder clearly changes language
+- If the room opens in English, stay in English unless the founder clearly changes language`;
+}
+
+export async function createLiveSession(userId: string, ws: WebSocket, options?: LiveSessionOptions): Promise<boolean> {
   const apiKey = getGeminiApiKey();
-  if (!apiKey) {
-    ws.send(JSON.stringify({ type: "error", message: "No Gemini API key configured" }));
+  if (!apiKey && !isVertexAIEnabled()) {
+    ws.send(JSON.stringify({ type: "error", message: "Gemini is not configured" }));
     return false;
   }
 
@@ -43,14 +75,14 @@ export async function createLiveSession(userId: string, ws: WebSocket): Promise<
       await destroyLiveSession(userId);
     }
 
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = createGoogleGenAI();
 
     const session = await ai.live.connect({
-      model: GEMINI_LIVE_MODEL,
+      model: getGeminiLiveModel(),
       config: {
-        responseModalities: ["AUDIO"],
+        responseModalities: [Modality.AUDIO],
         systemInstruction: {
-          parts: [{ text: SYSTEM_INSTRUCTION }],
+          parts: [{ text: buildSystemInstruction(options?.languageHint) }],
         },
         speechConfig: {
           voiceConfig: {
@@ -139,9 +171,11 @@ export async function sendAudioChunk(userId: string, audioData: string, mimeType
   if (!liveSession?.isActive) return;
 
   try {
-    await liveSession.session.sendRealtimeInput({
-      data: audioData,
-      mimeType,
+    liveSession.session.sendRealtimeInput({
+      audio: {
+        data: audioData,
+        mimeType,
+      },
     });
   } catch (error: any) {
     console.error(`[gemini-live] Error sending audio for ${userId}:`, error?.message);

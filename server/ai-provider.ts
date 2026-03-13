@@ -1,5 +1,6 @@
 import OpenAI from "openai";
-import { GoogleGenAI } from "@google/genai";
+import { env } from "./env";
+import { createGoogleGenAI, getGeminiTextModel, isVertexAIEnabled } from "./google-genai";
 
 export type AIProvider = "openai" | "gemini";
 
@@ -21,8 +22,8 @@ export interface AIClient {
 
 function createOpenAIClient(): AIClient {
   const openai = new OpenAI({
-    apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-    baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+    apiKey: env.openAIApiKey,
+    baseURL: env.openAIBaseUrl,
   });
 
   return {
@@ -66,19 +67,12 @@ function createOpenAIClient(): AIClient {
 }
 
 function createGeminiClient(): AIClient {
-  const personalKey = process.env.GOOGLE_API_KEY;
-  const ai = personalKey
-    ? new GoogleGenAI({ apiKey: personalKey })
-    : new GoogleGenAI({
-        apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
-        httpOptions: {
-          apiVersion: "",
-          baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
-        },
-      });
+  const ai = createGoogleGenAI();
 
-  if (personalKey) {
-    console.log("[AI] Using personal GOOGLE_API_KEY for Gemini");
+  if (process.env.GOOGLE_API_KEY) {
+    console.log("[AI] Using local GOOGLE_API_KEY for Gemini");
+  } else if (isVertexAIEnabled()) {
+    console.log(`[AI] Using Vertex AI for Gemini in ${env.googleCloudLocation}`);
   }
 
   function toGeminiMessages(messages: ChatMessage[]) {
@@ -103,7 +97,7 @@ function createGeminiClient(): AIClient {
     async chat(messages, maxTokens = 8192) {
       const { systemInstruction, contents } = toGeminiMessages(messages);
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: getGeminiTextModel(),
         contents,
         config: {
           maxOutputTokens: maxTokens,
@@ -116,7 +110,7 @@ function createGeminiClient(): AIClient {
     async *chatStream(messages, maxTokens = 8192) {
       const { systemInstruction, contents } = toGeminiMessages(messages);
       const stream = await ai.models.generateContentStream({
-        model: "gemini-2.5-flash",
+        model: getGeminiTextModel(),
         contents,
         config: {
           maxOutputTokens: maxTokens,
@@ -135,7 +129,7 @@ function createGeminiClient(): AIClient {
     async chatJSON(messages, maxTokens = 8192) {
       const { systemInstruction, contents } = toGeminiMessages(messages);
       const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: getGeminiTextModel(),
         contents,
         config: {
           maxOutputTokens: maxTokens,
@@ -148,8 +142,6 @@ function createGeminiClient(): AIClient {
   };
 }
 
-const geminiClient = createGeminiClient();
-
 let defaultProvider: AIProvider = "gemini";
 
 export function setDefaultProvider(provider: AIProvider) {
@@ -161,7 +153,7 @@ export function getDefaultProvider(): AIProvider {
 }
 
 export function getAIClient(provider?: AIProvider): AIClient {
-  return geminiClient;
+  return createGeminiClient();
 }
 
 export function getAvailableProviders(): { id: AIProvider; name: string; available: boolean }[] {

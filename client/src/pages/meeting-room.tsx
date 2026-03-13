@@ -1,1249 +1,667 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams, useLocation } from "wouter";
-import { queryClient } from "@/lib/queryClient";
+import { Link, useLocation, useParams } from "wouter";
+import { ArrowRight, Sparkles } from "lucide-react";
 import { streamChat } from "@/lib/api";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
+import { apiFetchJson, apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { AgentAvatar } from "@/components/agent-avatar";
-import LiveCanvas from "@/components/live-canvas";
-import {
-  ArrowLeft, Send, FileText, CheckCircle2, ListTodo,
-  Loader2, User, StopCircle, Brain,
-  Activity, Clock, FileCode, Eye, Mic, MicOff,
-  AlertTriangle, Zap, Volume2, VolumeX,
-} from "lucide-react";
-import { useTTS } from "@/hooks/use-tts";
 import { useAuth } from "@/hooks/use-auth";
-import type { Meeting, MeetingMessage, AgentPersona, Artifact, Decision, Task } from "@shared/schema";
+import { useGeminiLive } from "@/hooks/use-gemini-live";
+import { PageChrome } from "@/components/page-chrome";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { LiveRoomCanvas } from "@/components/live-room/live-room-canvas";
+import { LiveRoomRoster } from "@/components/live-room/live-room-roster";
+import { LiveRoomTranscript } from "@/components/live-room/live-room-transcript";
+import type { AgentPersona, MeetingMessage } from "@shared/schema";
+import type { AgentCommandMode, HumanRosterEntry, PrototypeKind, RoomContext, RoomMode, SpeechLocale, StreamingTurn } from "@/components/live-room/types";
 
-interface StreamingMessage {
-  agentId: number;
-  agentName: string;
-  content: string;
-  isComplete: boolean;
-}
-
-interface WorldStateData {
-  sessionId: string;
-  version: number;
-  entities: any[];
-  assumptions: any[];
-  constraints: any[];
-  options: any[];
-  scenarios: any[];
-  metrics: any[];
-  decisions: any[];
-  lastUpdated: string;
-}
-
-interface Counterfactual {
-  id: string;
-  scenario: string;
-  description: string;
-  impact: string;
-}
-
-function VoiceWaveform({ active, color = "bg-primary" }: { active: boolean; color?: string }) {
-  return (
-    <div className="flex items-center gap-[3px] h-4">
-      {[1, 2, 3, 4, 5].map((i) => (
-        <div
-          key={i}
-          className={`w-[3px] rounded-full transition-all ${color} ${active ? "animate-pulse" : "opacity-30"}`}
-          style={{
-            height: active ? `${8 + Math.random() * 10}px` : "4px",
-            animationDelay: `${i * 0.1}s`,
-            animationDuration: active ? `${0.4 + Math.random() * 0.3}s` : "0s",
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function LiveBadge() {
-  return (
-    <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-500/15 border border-red-500/30" data-testid="badge-live-mode">
-      <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-      <span className="text-[11px] font-bold text-red-400 tracking-wider">LIVE</span>
-    </div>
-  );
-}
-
-function ChatPanel({
-  messages,
-  streamingMessages,
-  agents,
-  agentIds,
-  onSend,
-  onSendToAgent,
-  onStopResponse,
-  isSending,
-  meetingStatus,
-  interruptMessage,
-  voiceMode,
-  onToggleVoiceMode,
-  liveMode,
-  onToggleLiveMode,
-  liveSpeaker,
-  interimTranscript,
-  pendingAgentSelect,
-  ttsPlaying,
-}: {
-  messages: MeetingMessage[];
-  streamingMessages: StreamingMessage[];
-  agents: AgentPersona[];
-  agentIds: number[];
-  onSend: (msg: string) => void;
-  onSendToAgent: (agentId: number) => void;
-  onStopResponse: () => void;
-  isSending: boolean;
-  meetingStatus: string;
-  interruptMessage: string | null;
-  voiceMode: boolean;
-  onToggleVoiceMode: () => void;
-  liveMode: boolean;
-  onToggleLiveMode: () => void;
-  liveSpeaker: string | null;
-  interimTranscript: string;
-  pendingAgentSelect: boolean;
-  ttsPlaying: boolean;
-}) {
-  const [input, setInput] = useState("");
-  const [isRecording, setIsRecording] = useState(false);
-  const wasRecordingBeforeTTS = useRef(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<any>(null);
-  const { speak, stop, isSpeaking, elevenLabsAvailable } = useTTS();
-  const activeAgents = agents.filter(a => agentIds.includes(a.id));
-
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages, streamingMessages, interimTranscript]);
-
-  useEffect(() => {
-    if (liveMode) return;
-    const anyTTSPlaying = ttsPlaying || isSpeaking;
-    if (anyTTSPlaying && isRecording) {
-      wasRecordingBeforeTTS.current = true;
-      try { recognitionRef.current?.stop(); } catch {}
-      setIsRecording(false);
-    } else if (!anyTTSPlaying && wasRecordingBeforeTTS.current) {
-      wasRecordingBeforeTTS.current = false;
-      setTimeout(() => startRecording(), 300);
-    }
-  }, [ttsPlaying, isSpeaking, liveMode]);
-
-  const startRecording = () => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-
-    recognition.onresult = (event: any) => {
-      let transcript = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        transcript += event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          setInput(prev => prev + " " + transcript.trim());
-          transcript = "";
-        }
-      }
-    };
-
-    recognition.onerror = () => setIsRecording(false);
-    recognition.onend = () => setIsRecording(false);
-    recognitionRef.current = recognition;
-    recognition.start();
-    setIsRecording(true);
-  };
-
-  const handleSend = () => {
-    if (!input.trim() || isSending) return;
-    onSend(input.trim());
-    setInput("");
-  };
-
-  const toggleVoice = () => {
-    if (isRecording) {
-      recognitionRef.current?.stop();
-      setIsRecording(false);
-      wasRecordingBeforeTTS.current = false;
-      return;
-    }
-    startRecording();
-  };
-
-  const agentMap = new Map(agents.map(a => [a.id, a]));
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-        <span className="font-semibold text-sm text-foreground">Transcript</span>
-        <Badge variant="secondary" className="text-xs">
-          {messages.length} messages
-        </Badge>
-        <div className="ml-auto flex items-center gap-1">
-          {isSpeaking && (
-            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={stop} data-testid="button-stop-tts">
-              <VolumeX className="w-3.5 h-3.5 text-red-400" />
-            </Button>
-          )}
-          {!liveMode && (
-            <Button
-              variant={voiceMode ? "default" : "ghost"}
-              size="sm"
-              className="h-6 px-2 text-[10px]"
-              onClick={onToggleVoiceMode}
-              data-testid="button-toggle-voice-mode"
-            >
-              <Volume2 className="w-3 h-3 mr-1" />
-              {voiceMode ? "Voice On" : "Voice Off"}
-            </Button>
-          )}
-          {(voiceMode || liveMode) && elevenLabsAvailable && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-medium" data-testid="badge-elevenlabs">
-              ElevenLabs
-            </span>
-          )}
-        </div>
-      </div>
-
-      {liveMode && (
-        <div className="px-4 py-2.5 border-b border-red-500/20 bg-red-500/5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <LiveBadge />
-              {liveSpeaker && (
-                <div className="flex items-center gap-1.5">
-                  <VoiceWaveform active={true} color={liveSpeaker === "You" ? "bg-blue-400" : "bg-emerald-400"} />
-                  <span className="text-xs font-medium text-foreground">{liveSpeaker}</span>
-                </div>
-              )}
-              {!liveSpeaker && !isSending && (
-                <span className="text-xs text-muted-foreground">Listening...</span>
-              )}
-              {!liveSpeaker && isSending && (
-                <div className="flex items-center gap-1.5">
-                  <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                  <span className="text-xs text-muted-foreground">Agents thinking...</span>
-                </div>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 px-2 text-[10px] text-red-400 hover:text-red-300"
-              onClick={onToggleLiveMode}
-              data-testid="button-stop-live"
-            >
-              <StopCircle className="w-3 h-3 mr-1" />
-              End Live
-            </Button>
-          </div>
-        </div>
-      )}
-
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {messages.map((msg) => {
-          const agent = msg.agentId ? agentMap.get(msg.agentId) : null;
-          const isHuman = msg.senderType === "human";
-          const isCofounder = msg.senderName === "co-founder";
-
-          return (
-            <div key={msg.id} className="group" data-testid={`message-${msg.id}`}>
-              <div className="flex items-start gap-2.5">
-                {isHuman ? (
-                  <div className="w-7 h-7 rounded-md bg-secondary flex items-center justify-center flex-shrink-0">
-                    <User className="w-3.5 h-3.5 text-secondary-foreground" />
-                  </div>
-                ) : isCofounder ? (
-                  <div className="w-7 h-7 rounded-md bg-yellow-500/20 flex items-center justify-center flex-shrink-0">
-                    <Zap className="w-3.5 h-3.5 text-yellow-500" />
-                  </div>
-                ) : (
-                  <AgentAvatar
-                    avatar={agent?.avatar}
-                    color={agent?.color}
-                    size="sm"
-                    name={agent?.name}
-                  />
-                )}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline gap-2 flex-wrap">
-                    <span className={`text-sm font-semibold ${isCofounder ? "text-yellow-500" : "text-foreground"}`}>
-                      {msg.senderName}
-                    </span>
-                    {agent && (
-                      <span className="text-xs text-muted-foreground">{agent.role}</span>
-                    )}
-                    {isCofounder && (
-                      <Badge variant="outline" className="text-[10px] px-1 py-0 border-yellow-500/30 text-yellow-500">
-                        INTERRUPT
-                      </Badge>
-                    )}
-                    <span className="text-xs text-muted-foreground">
-                      {new Date(msg.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
-                    </span>
-                  </div>
-                  <div className="text-sm text-foreground mt-1 whitespace-pre-wrap leading-relaxed">
-                    {msg.content}
-                  </div>
-                  {!isHuman && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-5 px-1.5 mt-1 text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                      onClick={(e) => { e.stopPropagation(); speak(msg.content, msg.senderName); }}
-                      data-testid={`button-speak-${msg.id}`}
-                    >
-                      <Volume2 className="w-2.5 h-2.5 mr-0.5" />
-                      Speak
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-
-        {streamingMessages.map((sm) => {
-          const agent = agentMap.get(sm.agentId);
-          return (
-            <div key={`streaming-${sm.agentId}`} className="group">
-              <div className="flex items-start gap-2.5">
-                <AgentAvatar
-                  avatar={agent?.avatar}
-                  color={agent?.color}
-                  size="sm"
-                  name={agent?.name}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline gap-2 flex-wrap">
-                    <span className="text-sm font-semibold text-foreground">{sm.agentName}</span>
-                    {agent && <span className="text-xs text-muted-foreground">{agent.role}</span>}
-                    {liveMode && !sm.isComplete && (
-                      <VoiceWaveform active={true} color="bg-emerald-400" />
-                    )}
-                  </div>
-                  <div className="text-sm text-foreground mt-1 whitespace-pre-wrap leading-relaxed">
-                    {sm.content}
-                    {!sm.isComplete && (
-                      <span className="inline-block w-1.5 h-4 bg-primary ml-0.5 animate-pulse" />
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-
-        {interruptMessage && (
-          <Card className="p-3 border-yellow-500/30 bg-yellow-500/5 animate-in slide-in-from-left">
-            <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle className="w-4 h-4 text-yellow-500" />
-              <span className="text-sm font-semibold text-yellow-500">co-founder Interrupt</span>
-            </div>
-            <p className="text-sm text-foreground whitespace-pre-wrap">{interruptMessage}</p>
-          </Card>
-        )}
-
-        {liveMode && interimTranscript && (
-          <div className="flex items-start gap-2.5 opacity-60">
-            <div className="w-7 h-7 rounded-md bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-              <Mic className="w-3.5 h-3.5 text-blue-400" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-baseline gap-2">
-                <span className="text-sm font-semibold text-blue-400">You</span>
-                <VoiceWaveform active={true} color="bg-blue-400" />
-              </div>
-              <div className="text-sm text-foreground mt-1 italic">
-                {interimTranscript}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {isSending && streamingMessages.length === 0 && !pendingAgentSelect && (
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            <span>Agents are thinking...</span>
-          </div>
-        )}
-
-        {pendingAgentSelect && !isSending && (
-          <div className="px-2 py-3 bg-primary/5 border border-primary/20 rounded-md mx-1 mb-1" data-testid="agent-select-panel">
-            <p className="text-[11px] font-medium text-primary mb-2">Select who should respond:</p>
-            <div className="flex flex-wrap gap-1.5">
-              {activeAgents.length > 0 ? (
-                <>
-                  {activeAgents.map(agent => (
-                    <Button
-                      key={agent.id}
-                      variant="outline"
-                      size="sm"
-                      className="h-7 px-2.5 text-xs gap-1.5"
-                      onClick={() => onSendToAgent(agent.id)}
-                      disabled={isSending}
-                      data-testid={`button-select-agent-${agent.id}`}
-                    >
-                      <AgentAvatar avatar={agent.avatar} color={agent.color} size="xs" name={agent.name} />
-                      {agent.name}
-                    </Button>
-                  ))}
-                </>
-              ) : null}
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 px-2.5 text-xs gap-1.5 border-yellow-500/30 text-yellow-500"
-                onClick={() => onSendToAgent(-1)}
-                disabled={isSending}
-                data-testid="button-select-cofounder"
-              >
-                <Zap className="w-3 h-3" />
-                {activeAgents.length > 0 ? "Auto (AI picks)" : "Send"}
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {meetingStatus === "active" && (
-        <div className="p-3 border-t border-border">
-          {isSending && (
-            <div className="flex items-center justify-center mb-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 px-3 text-xs border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
-                onClick={onStopResponse}
-                data-testid="button-stop-response"
-              >
-                <StopCircle className="w-3 h-3 mr-1.5" />
-                Stop Response
-              </Button>
-            </div>
-          )}
-          {!liveMode ? (
-            <>
-              <div className="flex gap-2">
-                <Button
-                  variant={isRecording ? "destructive" : "outline"}
-                  size="icon"
-                  onClick={toggleVoice}
-                  data-testid="button-voice-toggle"
-                  className="flex-shrink-0"
-                >
-                  {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                </Button>
-                <Textarea
-                  data-testid="input-meeting-message"
-                  placeholder={isRecording ? "Listening... speak now" : "Type your message..."}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSend();
-                    }
-                  }}
-                  className="resize-none text-sm"
-                  rows={2}
-                  disabled={isSending}
-                />
-                <Button
-                  data-testid="button-send-message"
-                  size="icon"
-                  onClick={handleSend}
-                  disabled={!input.trim() || isSending}
-                >
-                  <Send className="w-4 h-4" />
-                </Button>
-              </div>
-              <div className="flex items-center justify-between mt-2">
-                {isRecording ? (
-                  <div className="flex items-center gap-2 text-sm text-red-400">
-                    <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                    <span>Recording... click mic to stop</span>
-                  </div>
-                ) : <div />}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-3 text-xs border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300"
-                  onClick={onToggleLiveMode}
-                  data-testid="button-go-live"
-                >
-                  <Mic className="w-3 h-3 mr-1.5" />
-                  Go Live
-                </Button>
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center justify-center gap-3 py-1">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Mic className="w-4 h-4 text-red-400" />
-                <span>Speak naturally — AI responds automatically</span>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RightPanel({
-  agents,
-  agentIds,
-  workflowStatus,
-  streamingAgentId,
-  worldState,
-}: {
-  agents: AgentPersona[];
-  agentIds: number[];
-  workflowStatus: string[];
-  streamingAgentId: number | null;
-  worldState: WorldStateData | null;
-}) {
-  const activeAgents = agents.filter(a => agentIds.includes(a.id));
-
-  return (
-    <div className="h-full flex flex-col">
-      <div className="px-4 py-3 border-b border-border">
-        <span className="font-semibold text-sm text-foreground">Agents & Status</span>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-4">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-            Active Participants
-          </h4>
-          <div className="space-y-2">
-            <div className="flex items-center gap-2.5 p-2 rounded-md bg-yellow-500/5 border border-yellow-500/20" data-testid="panel-cofounder">
-              <div className="w-7 h-7 rounded-md bg-yellow-500/20 flex items-center justify-center flex-shrink-0">
-                <Zap className="w-3.5 h-3.5 text-yellow-500" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-foreground">co-founder</p>
-                <p className="text-xs text-muted-foreground">AI Decision Participant</p>
-              </div>
-            </div>
-
-            {activeAgents.map(agent => (
-              <div key={agent.id} className="flex items-center gap-2.5 p-2 rounded-md" data-testid={`panel-agent-${agent.id}`}>
-                <AgentAvatar avatar={agent.avatar} color={agent.color} size="sm" name={agent.name} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground">{agent.name}</p>
-                  <p className="text-xs text-muted-foreground">{agent.role}</p>
-                </div>
-                {streamingAgentId === agent.id && (
-                  <div className="flex items-center gap-1">
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                    <span className="text-xs text-green-500">Active</span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <Separator />
-
-        {worldState && worldState.entities.length > 0 && (
-          <>
-            <div className="p-4">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                Entities Detected
-              </h4>
-              <div className="flex flex-wrap gap-1.5">
-                {worldState.entities.map((e, i) => (
-                  <Badge key={i} variant="secondary" className="text-[10px]" data-testid={`entity-${i}`}>
-                    {e.name}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-            <Separator />
-          </>
-        )}
-
-        {worldState && worldState.decisions && worldState.decisions.length > 0 && (
-          <>
-            <div className="p-4">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Decision Memory
-              </h4>
-              <div className="space-y-2">
-                {worldState.decisions.map((d: any, i: number) => (
-                  <div key={i} className="p-2 rounded border border-border" data-testid={`decision-memory-${i}`}>
-                    <p className="text-xs font-medium text-foreground">{d.title}</p>
-                    <p className="text-[10px] text-muted-foreground mt-1">{d.reasoning}</p>
-                    {d.rejectedOptions && d.rejectedOptions.length > 0 && (
-                      <div className="mt-1.5">
-                        <p className="text-[10px] text-red-400 font-medium">Rejected:</p>
-                        {d.rejectedOptions.map((r: any, j: number) => (
-                          <p key={j} className="text-[10px] text-muted-foreground ml-2">- {r.reason}</p>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-            <Separator />
-          </>
-        )}
-
-        <div className="p-4">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
-            <Activity className="w-3.5 h-3.5" />
-            Workflow
-          </h4>
-          <div className="space-y-2">
-            {workflowStatus.length > 0 ? (
-              workflowStatus.slice(-8).map((status, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
-                  <Clock className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                  <span>{status}</span>
-                </div>
-              ))
-            ) : (
-              <p className="text-xs text-muted-foreground">Waiting for activity...</p>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+const roomModeLabels: Record<RoomMode, string> = {
+  align: "Alignment",
+  debate: "Debate",
+  research: "Research",
+  ship: "Ship",
+};
 
 export default function MeetingRoom() {
   const params = useParams<{ id: string }>();
+  const meetingId = Number(params.id);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { user } = useAuth();
-  const meetingId = parseInt(params.id || "0");
 
-  const [isSending, setIsSending] = useState(false);
-  const [isSummarizing, setIsSummarizing] = useState(false);
-  const [streamingMessages, setStreamingMessages] = useState<StreamingMessage[]>([]);
-  const [streamingAgentId, setStreamingAgentId] = useState<number | null>(null);
-  const [workflowStatus, setWorkflowStatus] = useState<string[]>([]);
-  const [summaryArtifacts, setSummaryArtifacts] = useState<Artifact[]>([]);
-  const [summaryDecisions, setSummaryDecisions] = useState<Decision[]>([]);
-  const [summaryTasks, setSummaryTasks] = useState<Task[]>([]);
-  const [worldState, setWorldState] = useState<WorldStateData | null>(null);
-  const [mermaidSpec, setMermaidSpec] = useState<string>("");
-  const [comparison, setComparison] = useState<{ scenarios: any[]; metricKeys: string[] } | null>(null);
-  const [counterfactuals, setCounterfactuals] = useState<Counterfactual[]>([]);
-  const [isWorldStateUpdating, setIsWorldStateUpdating] = useState(false);
-  const [interruptMessage, setInterruptMessage] = useState<string | null>(null);
-  const [voiceMode, setVoiceMode] = useState(false);
-  const voiceModeRef = useRef(false);
-  const [liveMode, setLiveMode] = useState(false);
-  const [liveSpeaker, setLiveSpeaker] = useState<string | null>(null);
-  const [interimTranscript, setInterimTranscript] = useState("");
-  const [pendingAgentSelect, setPendingAgentSelect] = useState(false);
-  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
-  const ttsQueueRef = useRef<{ text: string; agentName: string }[]>([]);
-  const mainTTS = useTTS();
-  const liveRecognitionRef = useRef<any>(null);
-  const liveModeRef = useRef(false);
-  const isSendingRef = useRef(false);
-  const ttsDoneCallbackRef = useRef<(() => void) | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const handleSendMessageRef = useRef<(content: string, skipAgentSelect?: boolean) => void>(() => {});
-
-  const startLiveSTT = useCallback(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition || !liveModeRef.current) return;
-
-    if (liveRecognitionRef.current) {
-      try { liveRecognitionRef.current.abort(); } catch {}
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = "en-US";
-
-    let silenceTimer: ReturnType<typeof setTimeout> | null = null;
-    let pendingFinal = "";
-
-    const SILENCE_TIMEOUT = 1000;
-
-    const flushAndSend = () => {
-      if (silenceTimer) { clearTimeout(silenceTimer); silenceTimer = null; }
-      if (!pendingFinal.trim() || !liveModeRef.current) return;
-
-      const text = pendingFinal.trim();
-      pendingFinal = "";
-      setLiveSpeaker(null);
-      setInterimTranscript("");
-      try { recognition.stop(); } catch {}
-      handleSendMessageRef.current(text, true);
-    };
-
-    const scheduleFlush = () => {
-      if (silenceTimer) clearTimeout(silenceTimer);
-      silenceTimer = setTimeout(() => {
-        if (!isSendingRef.current) {
-          flushAndSend();
-        }
-      }, SILENCE_TIMEOUT);
-    };
-
-    recognition.onresult = (event: any) => {
-      if (!liveModeRef.current) return;
-
-      let interim = "";
-      let finalText = "";
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalText += t;
-        } else {
-          interim += t;
-        }
-      }
-
-      if (finalText) {
-        pendingFinal += " " + finalText.trim();
-        setInterimTranscript("");
-        setLiveSpeaker("You");
-        scheduleFlush();
-      } else if (interim) {
-        setInterimTranscript(pendingFinal ? pendingFinal.trim() + " " + interim : interim);
-        setLiveSpeaker("You");
-        scheduleFlush();
-      }
-    };
-
-    recognition.onerror = (e: any) => {
-      if (e.error === "aborted" || e.error === "no-speech") return;
-      if (liveModeRef.current) {
-        setTimeout(() => startLiveSTT(), 300);
-      }
-    };
-
-    recognition.onend = () => {
-      if (silenceTimer) clearTimeout(silenceTimer);
-      if (pendingFinal.trim() && liveModeRef.current && !isSendingRef.current) {
-        const text = pendingFinal.trim();
-        pendingFinal = "";
-        setLiveSpeaker(null);
-        setInterimTranscript("");
-        handleSendMessageRef.current(text, true);
-      }
-    };
-
-    liveRecognitionRef.current = recognition;
-    try {
-      recognition.start();
-    } catch {}
-  }, [meetingId, mainTTS]);
-
-  const toggleLiveMode = useCallback(() => {
-    if (liveMode) {
-      liveModeRef.current = false;
-      setLiveMode(false);
-      setLiveSpeaker(null);
-      setInterimTranscript("");
-      if (liveRecognitionRef.current) {
-        try { liveRecognitionRef.current.abort(); } catch {}
-        liveRecognitionRef.current = null;
-      }
-      mainTTS.stop();
-    } else {
-      liveModeRef.current = true;
-      voiceModeRef.current = true;
-      setLiveMode(true);
-      setVoiceMode(true);
-      startLiveSTT();
-    }
-  }, [liveMode, startLiveSTT, mainTTS]);
-
-  const { data: meeting, isLoading: meetingLoading } = useQuery<Meeting>({
-    queryKey: ["/api/meetings", meetingId],
-    queryFn: () => fetch(`/api/meetings/${meetingId}`).then(r => r.json()),
+  const { data: roomContext, isLoading } = useQuery<RoomContext>({
+    queryKey: ["/api/meetings", meetingId, "room-context"],
+    queryFn: () => apiFetchJson(`/api/meetings/${meetingId}/room-context`),
   });
 
-  const { data: messages = [], isLoading: msgsLoading } = useQuery<MeetingMessage[]>({
+  const { data: serverMessages } = useQuery<MeetingMessage[]>({
     queryKey: ["/api/meetings", meetingId, "messages"],
-    queryFn: () => fetch(`/api/meetings/${meetingId}/messages`).then(r => r.json()),
+    queryFn: () => apiFetchJson(`/api/meetings/${meetingId}/messages`),
   });
 
-  const { data: agents = [] } = useQuery<AgentPersona[]>({
-    queryKey: ["/api/agents"],
-  });
+  const [messages, setMessages] = useState<MeetingMessage[]>([]);
+  const [streamingTurns, setStreamingTurns] = useState<StreamingTurn[]>([]);
+  const [targetAgentId, setTargetAgentId] = useState<number | null>(null);
+  const [roomMode, setRoomMode] = useState<RoomMode>("align");
+  const [speechLocale, setSpeechLocale] = useState<SpeechLocale>("auto");
+  const [activeAgentIds, setActiveAgentIds] = useState<number[]>([]);
+  const [canvas, setCanvas] = useState<RoomContext["canvas"] | null>(null);
+  const [mermaid, setMermaid] = useState("");
+  const [comparison, setComparison] = useState<RoomContext["comparison"]>(null);
+  const [meetingStatus, setMeetingStatus] = useState("active");
+  const [isSending, setIsSending] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+  const [isGeneratingPrototype, setIsGeneratingPrototype] = useState(false);
+  const [isLaunchingRuntime, setIsLaunchingRuntime] = useState(false);
+  const [generatedCode, setGeneratedCode] = useState("");
+  const [prototypeDraft, setPrototypeDraft] = useState("");
+  const [prototypeKind, setPrototypeKind] = useState<PrototypeKind>("software");
+  const [prototypeObjective, setPrototypeObjective] = useState("");
+  const [liveWorkOrder, setLiveWorkOrder] = useState("");
+  const [runtimePreviewUrl, setRuntimePreviewUrl] = useState<string | null>(null);
+  const [geminiLiveDraft, setGeminiLiveDraft] = useState("");
+  const [pendingLiveReconnect, setPendingLiveReconnect] = useState(false);
+  const pendingVoiceTurnRef = useRef<string | null>(null);
+  const activeStreamRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (meeting?.worldState) {
-      const ws = meeting.worldState as WorldStateData;
-      setWorldState(ws);
+    if (serverMessages) setMessages(serverMessages);
+  }, [serverMessages]);
+
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && navigator.language.toLowerCase().startsWith("ko")) {
+      setSpeechLocale("ko-KR");
     }
-  }, [meeting]);
-
-  const liveWasRecordingBeforeTTS = useRef(false);
-  useEffect(() => {
-    if (!liveMode) return;
-    const anyPlaying = mainTTS.isSpeaking;
-    if (anyPlaying && liveRecognitionRef.current) {
-      liveWasRecordingBeforeTTS.current = true;
-      try { liveRecognitionRef.current.abort(); } catch {}
-      liveRecognitionRef.current = null;
-    } else if (!anyPlaying && liveWasRecordingBeforeTTS.current) {
-      liveWasRecordingBeforeTTS.current = false;
-      setTimeout(() => {
-        if (liveModeRef.current) startLiveSTT();
-      }, 500);
-    }
-  }, [mainTTS.isSpeaking, liveMode, startLiveSTT]);
-
-  useEffect(() => {
-    return () => {
-      if (liveRecognitionRef.current) {
-        try { liveRecognitionRef.current.abort(); } catch {}
-        liveRecognitionRef.current = null;
-      }
-      liveModeRef.current = false;
-    };
   }, []);
 
   useEffect(() => {
-    if (!meetingId) return;
-    fetch(`/api/meetings/${meetingId}/worldstate`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.worldState) setWorldState(data.worldState);
-        if (data.mermaid) setMermaidSpec(data.mermaid);
-        if (data.comparison) setComparison(data.comparison);
-      })
-      .catch(() => {});
-  }, [meetingId]);
+    if (!roomContext) return;
+    setCanvas(roomContext.canvas);
+    setMermaid(roomContext.mermaid);
+    setComparison(roomContext.comparison);
+    setMeetingStatus(roomContext.meeting.status);
+    setActiveAgentIds(roomContext.activeAgentIds);
+  }, [roomContext]);
 
-  const handleStopResponse = useCallback(() => {
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
+  useEffect(() => {
+    if (!roomContext || prototypeObjective) return;
+    setPrototypeObjective(`Turn "${roomContext.meeting.title}" into a concrete draft the room can critique immediately.`);
+  }, [roomContext, prototypeObjective]);
+
+  useEffect(() => {
+    const latestRuntime = roomContext?.recentArtifacts.find((artifact) => artifact.type === "runtime_bundle");
+    setRuntimePreviewUrl(latestRuntime ? `/preview/runtime/${latestRuntime.id}` : null);
+  }, [roomContext]);
+
+  const humanRoster = useMemo<HumanRosterEntry[]>(() => {
+    const roster: HumanRosterEntry[] = [];
+    if (user) {
+      roster.push({
+        id: user.uid,
+        label: user.displayName || user.email || "Founder",
+        detail: user.email || "Current operator",
+        kind: "founder",
+      });
     }
-    setIsSending(false);
-    isSendingRef.current = false;
-    setStreamingMessages([]);
-    setPendingAgentSelect(false);
-    setPendingUserMessage(null);
-    mainTTS.stop();
-    queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
-  }, [meetingId, mainTTS]);
-
-  const handleSendToAgent = useCallback(async (agentId: number) => {
-    if (isSendingRef.current) return;
-    const content = pendingUserMessage;
-    setPendingAgentSelect(false);
-    setPendingUserMessage(null);
-    if (!content) return;
-
-    if (agentId === -1) {
-      handleSendMessageRef.current(content, true);
-      return;
+    for (const member of roomContext?.members || []) {
+      roster.push({
+        id: `member-${member.id}`,
+        label: member.email,
+        detail: `${member.role} · ${member.status}`,
+        kind: "member",
+        memberId: member.id,
+      });
     }
+    return roster;
+  }, [roomContext?.members, user]);
 
-    setIsSending(true);
-    isSendingRef.current = true;
-    setStreamingMessages([]);
-    setInterruptMessage(null);
-    setWorkflowStatus(prev => [...prev, `User message sent`]);
-
-    const ac = new AbortController();
-    abortControllerRef.current = ac;
-
-    await streamChat(
-      `/api/meetings/${meetingId}/messages`,
-      { content, senderName: "You", targetAgentIds: [agentId] },
-      (data) => {
-        switch (data.type) {
-          case "agent_start":
-            setStreamingAgentId(data.agentId);
-            setStreamingMessages(prev => [
-              ...prev,
-              { agentId: data.agentId, agentName: data.agentName, content: "", isComplete: false }
-            ]);
-            break;
-          case "agent_chunk":
-            setStreamingMessages(prev =>
-              prev.map(sm =>
-                sm.agentId === data.agentId
-                  ? { ...sm, content: sm.content + data.content }
-                  : sm
-              )
-            );
-            break;
-          case "agent_done":
-            setStreamingMessages(prev => {
-              const msg = prev.find(sm => sm.agentId === data.agentId);
-              if (msg && (voiceModeRef.current || liveModeRef.current)) {
-                mainTTS.speak(msg.content, msg.agentName);
-              }
-              return prev.map(sm =>
-                sm.agentId === data.agentId ? { ...sm, isComplete: true } : sm
-              );
-            });
-            setStreamingAgentId(null);
-            break;
-          case "worldstate_updated":
-            setIsWorldStateUpdating(false);
-            if (data.worldState) setWorldState(data.worldState);
-            if (data.mermaid) setMermaidSpec(data.mermaid);
-            if (data.comparison) setComparison(data.comparison);
-            break;
-          case "interrupt":
-            if (data.action?.interruptReason) setInterruptMessage(data.action.interruptReason);
-            break;
-          case "counterfactuals":
-            if (data.counterfactuals) setCounterfactuals(data.counterfactuals);
-            break;
-          case "done":
-            setIsSending(false);
-            isSendingRef.current = false;
-            setStreamingMessages([]);
-            abortControllerRef.current = null;
-            queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
-            if (liveModeRef.current) {
-              setTimeout(() => { if (liveModeRef.current) startLiveSTT(); }, 200);
-            }
-            break;
-        }
-      },
-      () => { setIsSending(false); isSendingRef.current = false; abortControllerRef.current = null; },
-      ac.signal
-    );
-  }, [meetingId, pendingUserMessage]);
-
-  const handleSendMessage = useCallback(async (content: string, skipAgentSelect?: boolean) => {
-    if (!skipAgentSelect && !liveModeRef.current) {
-      setPendingUserMessage(content);
-      setPendingAgentSelect(true);
-      return;
-    }
-
-    setIsSending(true);
-    isSendingRef.current = true;
-    setStreamingMessages([]);
-    setInterruptMessage(null);
-    setWorkflowStatus(prev => [...prev, `User message sent`]);
-
-    const ac = new AbortController();
-    abortControllerRef.current = ac;
-
-    await streamChat(
-      `/api/meetings/${meetingId}/messages`,
-      { content, senderName: "You" },
-      (data) => {
-        switch (data.type) {
-          case "agent_start":
-            setStreamingAgentId(data.agentId);
-            setStreamingMessages(prev => [
-              ...prev,
-              { agentId: data.agentId, agentName: data.agentName, content: "", isComplete: false }
-            ]);
-            setWorkflowStatus(prev => [...prev, `${data.agentName} is responding...`]);
-            break;
-          case "agent_chunk":
-            setStreamingMessages(prev =>
-              prev.map(sm =>
-                sm.agentId === data.agentId
-                  ? { ...sm, content: sm.content + data.content }
-                  : sm
-              )
-            );
-            break;
-          case "agent_done":
-            setStreamingMessages(prev => {
-              const msg = prev.find(sm => sm.agentId === data.agentId);
-              if (msg && (voiceModeRef.current || liveModeRef.current)) {
-                mainTTS.speak(msg.content, msg.agentName);
-              }
-              if (msg && liveModeRef.current) {
-                setLiveSpeaker(msg.agentName);
-              }
-              return prev.map(sm =>
-                sm.agentId === data.agentId
-                  ? { ...sm, isComplete: true }
-                  : sm
-              );
-            });
-            setStreamingAgentId(null);
-            setWorkflowStatus(prev => [...prev, `${data.data?.senderName} finished`]);
-            break;
-          case "worldstate_updating":
-            setIsWorldStateUpdating(true);
-            setWorkflowStatus(prev => [...prev, "World Compiler processing..."]);
-            break;
-          case "worldstate_updated":
-            setIsWorldStateUpdating(false);
-            if (data.worldState) setWorldState(data.worldState);
-            if (data.mermaid) setMermaidSpec(data.mermaid);
-            if (data.comparison) setComparison(data.comparison);
-            setWorkflowStatus(prev => [...prev, `WorldState v${data.worldState?.version || "?"} compiled`]);
-            break;
-          case "interrupt":
-            if (data.action?.interruptReason) {
-              setInterruptMessage(data.action.interruptReason);
-              if (voiceModeRef.current || liveModeRef.current) {
-                ttsQueueRef.current.push({ text: data.action.interruptReason, agentName: "co-founder" });
-              }
-            }
-            setWorkflowStatus(prev => [...prev, "co-founder INTERRUPTED"]);
-            break;
-          case "counterfactuals":
-            if (data.counterfactuals) {
-              setCounterfactuals(data.counterfactuals);
-            }
-            setWorkflowStatus(prev => [...prev, `${data.counterfactuals?.length || 0} counterfactuals generated`]);
-            break;
-          case "done":
-            setIsSending(false);
-            isSendingRef.current = false;
-            setStreamingMessages([]);
-            abortControllerRef.current = null;
-            queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
-
-            if (liveModeRef.current) {
-              setTimeout(() => {
-                if (liveModeRef.current) startLiveSTT();
-              }, 200);
-            }
-            break;
-        }
-      },
-      () => {
-        setIsSending(false);
-        isSendingRef.current = false;
-        abortControllerRef.current = null;
-      },
-      ac.signal
-    );
-  }, [meetingId, startLiveSTT]);
-
-  handleSendMessageRef.current = handleSendMessage;
-
-  const handleEndMeeting = async () => {
-    if (liveMode) {
-      liveModeRef.current = false;
-      setLiveMode(false);
-      setLiveSpeaker(null);
-      setInterimTranscript("");
-      if (liveRecognitionRef.current) {
-        try { liveRecognitionRef.current.abort(); } catch {}
-        liveRecognitionRef.current = null;
-      }
-      mainTTS.stop();
-    }
-    setIsSummarizing(true);
-    setWorkflowStatus(prev => [...prev, "Consensus Engine activated..."]);
-
-    await streamChat(
-      `/api/meetings/${meetingId}/summarize`,
-      {},
-      (data) => {
-        if (data.type === "summary") {
-          setSummaryArtifacts(data.artifacts || []);
-          setSummaryDecisions(data.decisions || []);
-          setSummaryTasks(data.tasks || []);
-          setWorkflowStatus(prev => [
-            ...prev,
-            `Generated ${data.artifacts?.length || 0} documents`,
-            `Recorded ${data.decisions?.length || 0} decisions`,
-            `Created ${data.tasks?.length || 0} tasks`,
-          ]);
-        }
-        if (data.type === "code_start") {
-          setWorkflowStatus(prev => [...prev, "Coding Agent generating implementation..."]);
-        }
-        if (data.type === "code_complete") {
-          setWorkflowStatus(prev => [...prev, "Code implementation generated and saved"]);
-        }
-        if (data.type === "code_error") {
-          setWorkflowStatus(prev => [...prev, "Code generation skipped"]);
-        }
-      },
-      () => {
-        setIsSummarizing(false);
-        queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId] });
-        if (meeting?.workspaceId) {
-          queryClient.invalidateQueries({ queryKey: ["/api/workspaces", meeting.workspaceId, "artifacts"] });
-          queryClient.invalidateQueries({ queryKey: ["/api/workspaces", meeting.workspaceId, "decisions"] });
-          queryClient.invalidateQueries({ queryKey: ["/api/workspaces", meeting.workspaceId, "tasks"] });
-        }
-        toast({ title: "Meeting ended", description: "Decision memory saved. Code & artifacts generated." });
-      }
-    );
+  const flushPendingVoiceTurn = async () => {
+    const pending = pendingVoiceTurnRef.current;
+    if (!pending || isSending) return;
+    pendingVoiceTurnRef.current = null;
+    await sendMessage(pending);
   };
 
-  if (meetingLoading) {
+  useEffect(() => {
+    if (!isSending) {
+      flushPendingVoiceTurn().catch(() => {});
+    }
+  }, [isSending]);
+
+  const geminiLive = useGeminiLive({
+    userId: user?.uid || null,
+    languageHint: speechLocale,
+    onTranscript: (text) => setGeminiLiveDraft(text),
+    onTurnComplete: (text) => {
+      setGeminiLiveDraft("");
+      if (isSending) {
+        pendingVoiceTurnRef.current = text;
+        return;
+      }
+      sendMessage(text).catch((error) => {
+        toast({
+          title: "Live turn failed",
+          description: error instanceof Error ? error.message : "Gemini Live turn could not be sent.",
+          variant: "destructive",
+        });
+      });
+    },
+    onError: (message) => {
+      toast({ title: "Gemini Live error", description: message, variant: "destructive" });
+    },
+  });
+
+  useEffect(() => {
+    if (pendingLiveReconnect && geminiLive.status === "disconnected") {
+      geminiLive.connect();
+      setPendingLiveReconnect(false);
+    }
+  }, [geminiLive.connect, geminiLive.status, pendingLiveReconnect]);
+
+  const agents = roomContext?.agents || [];
+
+  const handleSpeechLocaleChange = (nextLocale: SpeechLocale) => {
+    if (nextLocale === speechLocale) return;
+    const liveWasConnected = geminiLive.status !== "disconnected";
+    setSpeechLocale(nextLocale);
+    if (liveWasConnected) {
+      setPendingLiveReconnect(true);
+      geminiLive.disconnect();
+      toast({
+        title: "Live language updated",
+        description: nextLocale === "ko-KR" ? "Gemini Live is reconnecting with Korean priority." : nextLocale === "en-US" ? "Gemini Live is reconnecting with English priority." : "Gemini Live is reconnecting in auto language mode.",
+      });
+    }
+  };
+
+  const sendMessage = async (content: string, explicitTarget?: number | null) => {
+    if (!content.trim() || isSending) return;
+
+    const senderName = user?.displayName || user?.email || "Founder";
+    const targetIds = explicitTarget ? [explicitTarget] : targetAgentId ? [targetAgentId] : undefined;
+    const controller = new AbortController();
+    let completed = false;
+    activeStreamRef.current = controller;
+    setIsSending(true);
+    setStreamingTurns([]);
+
+    try {
+      await streamChat(
+        `/api/meetings/${meetingId}/messages`,
+        {
+          content,
+          senderName,
+          targetAgentIds: targetIds,
+        },
+        (event) => {
+          switch (event.type) {
+            case "user_message":
+              if (event.data) {
+                setMessages((current) => [...current, event.data]);
+              }
+              break;
+            case "agent_start":
+              setStreamingTurns((current) => {
+                if (current.find((turn) => turn.agentId === event.agentId)) return current;
+                return [...current, { agentId: event.agentId, agentName: event.agentName, content: "" }];
+              });
+              break;
+            case "agent_chunk":
+              setStreamingTurns((current) =>
+                current.map((turn) =>
+                  turn.agentId === event.agentId ? { ...turn, content: `${turn.content}${event.content || ""}` } : turn,
+                ),
+              );
+              break;
+            case "agent_done":
+              setStreamingTurns((current) => current.filter((turn) => turn.agentId !== event.agentId));
+              if (event.data) {
+                setMessages((current) => [...current, event.data]);
+              }
+              break;
+            case "action_result":
+              if (event.message) {
+                setMessages((current) => [...current, event.message]);
+              }
+              if (event.action?.workOrder) {
+                setLiveWorkOrder(event.action.workOrder);
+              }
+              if (event.action && event.action.success === false) {
+                toast({
+                  title: "Agent action failed",
+                  description: event.action.message || "A room action could not be completed.",
+                  variant: "destructive",
+                });
+              }
+              break;
+            case "worldstate_updated":
+              setCanvas(event.canvas || null);
+              setMermaid(event.mermaid || "");
+              setComparison(event.comparison || null);
+              break;
+            case "interrupt":
+              if (event.message) {
+                setMessages((current) => [...current, event.message]);
+              }
+              break;
+            case "error":
+              toast({
+                title: "Room response failed",
+                description: event.error || "A room response failed while streaming.",
+                variant: "destructive",
+              });
+              break;
+            default:
+              break;
+          }
+        },
+        () => {
+          completed = true;
+          setIsSending(false);
+          activeStreamRef.current = null;
+          queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "room-context"] });
+        },
+        controller.signal,
+      );
+    } catch (error: any) {
+      toast({
+        title: "Message failed",
+        description: error.message || "Could not send this turn to the room.",
+        variant: "destructive",
+      });
+    } finally {
+      if (!completed && activeStreamRef.current === controller) {
+        activeStreamRef.current = null;
+        setIsSending(false);
+        setStreamingTurns([]);
+      }
+    }
+  };
+
+  const stopStreaming = () => {
+    activeStreamRef.current?.abort();
+    activeStreamRef.current = null;
+    setIsSending(false);
+    setStreamingTurns([]);
+  };
+
+  const toggleAgent = async (agent: AgentPersona) => {
+    const currentlyActive = activeAgentIds.includes(agent.id);
+    if (currentlyActive && activeAgentIds.length === 1) {
+      toast({
+        title: "Keep one specialist active",
+        description: "The room needs at least one active agent to remain operational.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const nextAgentIds = currentlyActive
+      ? activeAgentIds.filter((id) => id !== agent.id)
+      : [...activeAgentIds, agent.id];
+
+    await apiRequest("PATCH", `/api/meetings/${meetingId}/agents`, { agentIds: nextAgentIds });
+    setActiveAgentIds(nextAgentIds);
+    if (currentlyActive && targetAgentId === agent.id) {
+      setTargetAgentId(null);
+    }
+    queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "room-context"] });
+  };
+
+  const inviteHuman = async (email: string) => {
+    if (!roomContext) return;
+    await apiRequest("POST", `/api/workspaces/${roomContext.workspace.id}/members`, { email });
+    queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "room-context"] });
+  };
+
+  const removeHuman = async (memberId: number) => {
+    if (!roomContext) return;
+    await apiRequest("DELETE", `/api/workspaces/${roomContext.workspace.id}/members/${memberId}`);
+    queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "room-context"] });
+  };
+
+  const generateCode = async () => {
+    if (isGeneratingCode) return;
+    setIsGeneratingCode(true);
+    setGeneratedCode("");
+
+    try {
+      await streamChat(
+        `/api/meetings/${meetingId}/generate-code`,
+        {},
+        (event) => {
+          if (event.type === "chunk" && event.content) {
+            setGeneratedCode((current) => `${current}${event.content}`);
+          }
+        },
+        () => {
+          setIsGeneratingCode(false);
+          queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "room-context"] });
+        },
+      );
+    } catch (error: any) {
+      setIsGeneratingCode(false);
+      toast({
+        title: "Code draft failed",
+        description: error.message || "Could not generate code from the room.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const generatePrototype = async (
+    kindOverride?: PrototypeKind,
+    objectiveOverride?: string,
+    agentOverride?: Pick<AgentPersona, "name" | "role"> | null,
+  ) => {
+    const nextKind = kindOverride || prototypeKind;
+    const nextObjective = (objectiveOverride || prototypeObjective || roomContext?.meeting.title || "").trim();
+
+    if (!roomContext || !nextObjective || isGeneratingPrototype) return;
+
+    setPrototypeKind(nextKind);
+    setPrototypeObjective(nextObjective);
+    setLiveWorkOrder(nextObjective);
+    setIsGeneratingPrototype(true);
+    setPrototypeDraft("");
+
+    try {
+      await streamChat(
+        `/api/meetings/${meetingId}/prototype-draft`,
+        {
+          kind: nextKind,
+          objective: nextObjective,
+          agentName: agentOverride?.name,
+          agentRole: agentOverride?.role,
+        },
+        (event) => {
+          if (event.type === "chunk" && event.content) {
+            setPrototypeDraft((current) => `${current}${event.content}`);
+          }
+          if (event.type === "complete" && event.message) {
+            setMessages((current) => [...current, event.message]);
+          }
+        },
+        () => {
+          setIsGeneratingPrototype(false);
+          queryClient.invalidateQueries({ queryKey: ["/api/workspaces", roomContext.workspace.id, "artifacts"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "messages"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "room-context"] });
+        },
+      );
+    } catch (error: any) {
+      setIsGeneratingPrototype(false);
+      toast({
+        title: "Build draft failed",
+        description: error.message || "Could not generate a room prototype draft.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const launchRuntimePreview = async () => {
+    if (!roomContext || prototypeKind !== "software" || isLaunchingRuntime) return;
+
+    setIsLaunchingRuntime(true);
+    try {
+      const response = await apiFetchJson<{ previewUrl: string; message?: MeetingMessage }>(`/api/meetings/${meetingId}/runtime-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objective: prototypeObjective || roomContext.meeting.title,
+          sourceDraft: prototypeDraft || undefined,
+        }),
+      });
+
+      setRuntimePreviewUrl(response.previewUrl);
+      if (response.message) {
+        setMessages((current) => [...current, response.message!]);
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/workspaces", roomContext.workspace.id, "artifacts"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "room-context"] });
+    } catch (error: any) {
+      toast({
+        title: "Runtime launch failed",
+        description: error.message || "Could not build a runnable preview from the current draft.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLaunchingRuntime(false);
+    }
+  };
+
+  const inferPrototypeKindFromAgent = (agent: AgentPersona): PrototypeKind => {
+    const role = `${agent.name} ${agent.role}`.toLowerCase();
+    if (/(hardware|firmware|embedded|mechanical|electrical|industrial)/.test(role)) return "hardware";
+    if (/(ops|operation|process|workflow|strategy|pm|program|go-to-market|gtm)/.test(role)) return "workflow";
+    if (/(research|science|experiment|data|analytics|finance)/.test(role)) return "experiment";
+    return "software";
+  };
+
+  const buildAgentCommandPrompt = (agent: AgentPersona, command: AgentCommandMode) => {
+    switch (command) {
+      case "build":
+        return `${agent.name}, take point as ${agent.role} and produce something concrete the room can inspect immediately for "${roomContext?.meeting.title}". Make assumptions explicit and optimize for critique, not polish.`;
+      case "critique":
+        return `${agent.name}, critique the current direction hard as ${agent.role}. Call out the biggest flaws, weak assumptions, and what would break first.`;
+      case "research":
+        return `${agent.name}, from your ${agent.role} perspective, identify what we still need to verify externally and turn it into the sharpest research path for this room.`;
+      case "decide":
+      default:
+        return `${agent.name}, act as the accountable ${agent.role} and force a decision. Recommend one direction, reject the weaker paths, and explain why now.`;
+    }
+  };
+
+  const runAgentCommand = async (agent: AgentPersona, command: AgentCommandMode) => {
+    if (!roomContext) return;
+
+    const prompt = buildAgentCommandPrompt(agent, command);
+    setTargetAgentId(agent.id);
+    setLiveWorkOrder(prompt);
+
+    if (command === "build") {
+      const nextKind = inferPrototypeKindFromAgent(agent);
+      setPrototypeKind(nextKind);
+      setPrototypeObjective(prompt);
+      await generatePrototype(nextKind, prompt, agent);
+      return;
+    }
+
+    if (command === "research") {
+      setRoomMode("research");
+    } else if (command === "decide") {
+      setRoomMode("ship");
+    } else if (command === "critique") {
+      setRoomMode("debate");
+    }
+
+    await sendMessage(prompt, agent.id);
+  };
+
+  const finalizeRoom = async () => {
+    if (!roomContext || isFinalizing) return;
+    setIsFinalizing(true);
+    setGeneratedCode("");
+
+    try {
+      await streamChat(
+        `/api/meetings/${meetingId}/summarize`,
+        {},
+        (event) => {
+          if (event.type === "summary") {
+            setMeetingStatus("ended");
+          }
+          if (event.type === "code_chunk" && event.content) {
+            setGeneratedCode((current) => `${current}${event.content}`);
+          }
+        },
+        () => {
+          setIsFinalizing(false);
+          queryClient.invalidateQueries({ queryKey: ["/api/workspaces", roomContext.workspace.id, "artifacts"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/workspaces", roomContext.workspace.id, "decisions"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/workspaces", roomContext.workspace.id, "tasks"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/meetings", meetingId, "room-context"] });
+          setLocation(`/workspace/${roomContext.workspace.id}/outcomes`);
+        },
+      );
+    } catch (error: any) {
+      setIsFinalizing(false);
+      toast({
+        title: "Room finalization failed",
+        description: error.message || "Could not finalize outputs from this room.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  if (isLoading || !roomContext || !canvas) {
     return (
-      <div className="h-screen bg-background flex items-center justify-center">
-        <Loader2 className="w-6 h-6 animate-spin text-primary" />
-      </div>
+      <PageChrome eyebrow="Live Room" title="Loading room" description="Restoring the shared context for this meeting." fluid>
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Skeleton className="h-[72vh] rounded-3xl" />
+          <Skeleton className="h-[72vh] rounded-3xl lg:col-span-1" />
+          <Skeleton className="h-[72vh] rounded-3xl" />
+        </div>
+      </PageChrome>
     );
   }
-
-  if (!meeting) {
-    return (
-      <div className="h-screen bg-background flex items-center justify-center">
-        <p className="text-muted-foreground">Meeting not found</p>
-      </div>
-    );
-  }
-
-  const agentIds = (meeting.agentIds as number[]) || [];
 
   return (
-    <div className="h-screen bg-background flex flex-col">
-      <header className="flex items-center justify-between gap-2 px-4 py-2 border-b border-border bg-card flex-shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <Button
-            data-testid="button-back-workspace"
-            variant="ghost"
-            size="icon"
-            onClick={() => setLocation(`/workspace/${meeting.workspaceId}`)}
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-          <div className="min-w-0">
-            <h1 className="text-sm font-semibold text-foreground truncate" data-testid="text-meeting-title">
-              {meeting.title}
-            </h1>
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-xs text-muted-foreground">
-                {meeting.status === "active" ? "In Progress" : "Ended"} - {agentIds.length + 1} participants
-              </p>
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0" data-testid="badge-ai-provider">
-                Gemini 2.5
-              </Badge>
-              {worldState && worldState.version > 0 && (
-                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                  WorldState v{worldState.version}
-                </Badge>
-              )}
-              {liveMode && <LiveBadge />}
-            </div>
+    <PageChrome
+      eyebrow="Live Room"
+      title={roomContext.meeting.title}
+      description="Three panes only: transcript control, agent-driven canvas, and participant operations."
+      badge={meetingStatus === "active" ? "Room Active" : "Room Ended"}
+      backHref={`/workspace/${roomContext.workspace.id}`}
+      fluid
+      actions={
+        <>
+          <div className="flex flex-wrap gap-2">
+            {(Object.keys(roomModeLabels) as RoomMode[]).map((mode) => (
+              <Button
+                key={mode}
+                variant={roomMode === mode ? "default" : "outline"}
+                size="sm"
+                className="h-8"
+                onClick={() => setRoomMode(mode)}
+              >
+                {roomModeLabels[mode]}
+              </Button>
+            ))}
           </div>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {meeting.status === "active" && (
-            <Button
-              data-testid="button-end-meeting"
-              variant="destructive"
-              size="sm"
-              onClick={handleEndMeeting}
-              disabled={isSummarizing || isSending}
-            >
-              {isSummarizing ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  Summarizing...
-                </>
-              ) : (
-                <>
-                  <StopCircle className="w-3.5 h-3.5 mr-1.5" />
-                  End Meeting
-                </>
-              )}
+          <Link href={`/workspace/${roomContext.workspace.id}/outcomes`}>
+            <Button variant="outline" className="gap-2">
+              Outcomes
+              <ArrowRight className="h-4 w-4" />
             </Button>
-          )}
-        </div>
-      </header>
-
-      <div className="flex-1 flex min-h-0">
-        <div className="w-[340px] border-r border-border flex-shrink-0 flex flex-col min-h-0">
-          <ChatPanel
-            messages={messages}
-            streamingMessages={streamingMessages}
-            agents={agents}
-            agentIds={(meeting.agentIds as number[]) || []}
-            onSend={handleSendMessage}
-            onSendToAgent={handleSendToAgent}
-            onStopResponse={handleStopResponse}
-            isSending={isSending}
-            meetingStatus={meeting.status}
-            interruptMessage={interruptMessage}
-            voiceMode={voiceMode}
-            onToggleVoiceMode={() => {
-              const next = !voiceMode;
-              setVoiceMode(next);
-              voiceModeRef.current = next;
-              if (!next) mainTTS.stop();
-            }}
-            liveMode={liveMode}
-            onToggleLiveMode={toggleLiveMode}
-            liveSpeaker={liveSpeaker}
-            interimTranscript={interimTranscript}
-            pendingAgentSelect={pendingAgentSelect}
-            ttsPlaying={mainTTS.isSpeaking}
-          />
-        </div>
-
-        <div className="flex-1 flex flex-col min-h-0 min-w-0">
-          {isSummarizing ? (
-            <div className="flex flex-col items-center justify-center h-full gap-4">
-              <div className="relative">
-                <div className="w-16 h-16 rounded-full border-2 border-primary/30 flex items-center justify-center">
-                  <Brain className="w-8 h-8 text-primary animate-pulse" />
-                </div>
-                <div className="absolute inset-0 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-              </div>
-              <div className="text-center">
-                <p className="font-semibold text-foreground">Consensus Engine Active</p>
-                <p className="text-sm text-muted-foreground mt-1">Analyzing transcript & generating code...</p>
-              </div>
-              {workflowStatus.length > 0 && (
-                <div className="mt-2 space-y-1 text-center">
-                  {workflowStatus.slice(-4).map((s, i) => (
-                    <p key={i} className="text-xs text-muted-foreground animate-in fade-in">{s}</p>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <LiveCanvas
-              worldState={worldState}
-              mermaidSpec={mermaidSpec}
-              comparison={comparison}
-              counterfactuals={counterfactuals}
-              isUpdating={isWorldStateUpdating}
-              userId={user?.uid || null}
-              meetingId={meetingId}
-              meetingStatus={meeting.status}
-            />
-          )}
-        </div>
-
-        <div className="w-[260px] border-l border-border flex-shrink-0 flex flex-col min-h-0">
-          <RightPanel
-            agents={agents}
-            agentIds={agentIds}
-            workflowStatus={workflowStatus}
-            streamingAgentId={streamingAgentId}
-            worldState={worldState}
-          />
-        </div>
+          </Link>
+        </>
+      }
+    >
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Badge variant="secondary" className="rounded-full px-3 py-1">
+          {roomContext.workspace.name}
+        </Badge>
+        <Badge variant="secondary" className="rounded-full px-3 py-1">
+          {activeAgentIds.length} active agents
+        </Badge>
+        <Badge variant="secondary" className="rounded-full px-3 py-1">
+          {humanRoster.length} humans
+        </Badge>
+        {geminiLive.status !== "disconnected" ? (
+          <Badge className="rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+            Gemini Live {geminiLive.status}
+          </Badge>
+        ) : null}
+        <Badge variant="outline" className="rounded-full px-3 py-1">
+          <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+          Center canvas accepts agent operations directly
+        </Badge>
       </div>
-    </div>
+
+      <div className="h-[calc(100vh-255px)] min-h-[720px] overflow-hidden rounded-[24px] border border-card-border">
+        <ResizablePanelGroup direction="horizontal" className="h-full">
+          <ResizablePanel defaultSize={24} minSize={18}>
+            <LiveRoomTranscript
+              meetingStatus={meetingStatus}
+              messages={messages}
+              streamingTurns={streamingTurns}
+              agents={agents}
+              activeAgentIds={activeAgentIds}
+              targetAgentId={targetAgentId}
+              geminiLiveStatus={geminiLive.status}
+              geminiLiveDraft={geminiLiveDraft}
+              speechLocale={speechLocale}
+              micLevel={geminiLive.micLevel}
+              microphoneEnabled={geminiLive.microphoneEnabled}
+              isSending={isSending}
+              onSend={(content, explicitTarget) => sendMessage(content, explicitTarget)}
+              onAbort={stopStreaming}
+              onToggleLive={() => {
+                if (geminiLive.status === "disconnected") {
+                  geminiLive.connect();
+                } else {
+                  geminiLive.disconnect();
+                }
+              }}
+              onToggleMicrophone={geminiLive.toggleMicrophone}
+              onSpeechLocaleChange={handleSpeechLocaleChange}
+              onClearTarget={() => setTargetAgentId(null)}
+            />
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={52} minSize={38}>
+            <LiveRoomCanvas
+              canvas={canvas}
+              liveWorkOrder={liveWorkOrder}
+              mermaid={mermaid}
+              comparison={comparison}
+              userId={user?.uid || null}
+              meetingStatus={meetingStatus}
+              recentArtifacts={roomContext.recentArtifacts}
+              recentDecisions={roomContext.recentDecisions}
+              recentTasks={roomContext.recentTasks}
+              generatedCode={generatedCode}
+              prototypeDraft={prototypeDraft}
+              prototypeKind={prototypeKind}
+              prototypeObjective={prototypeObjective}
+              runtimePreviewUrl={runtimePreviewUrl}
+              isFinalizing={isFinalizing}
+              isGeneratingCode={isGeneratingCode}
+              isGeneratingPrototype={isGeneratingPrototype}
+              isLaunchingRuntime={isLaunchingRuntime}
+              onFinalizeRoom={finalizeRoom}
+              onGenerateCode={generateCode}
+              onPrototypeKindChange={setPrototypeKind}
+              onPrototypeObjectiveChange={setPrototypeObjective}
+              onGeneratePrototype={generatePrototype}
+              onLaunchRuntime={launchRuntimePreview}
+            />
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={24} minSize={18}>
+            <LiveRoomRoster
+              humans={humanRoster}
+              agents={agents}
+              activeAgentIds={activeAgentIds}
+              targetAgentId={targetAgentId}
+              roomMode={roomMode}
+              liveWorkOrder={liveWorkOrder}
+              geminiLiveStatus={geminiLive.status}
+              onInviteHuman={inviteHuman}
+              onRemoveHuman={removeHuman}
+              onToggleAgent={toggleAgent}
+              onAddressAgent={setTargetAgentId}
+              onRunAgentCommand={runAgentCommand}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
+    </PageChrome>
   );
 }

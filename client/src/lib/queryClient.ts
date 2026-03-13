@@ -6,12 +6,22 @@ export function setCurrentUserId(uid: string | null) {
   currentUserId = uid;
 }
 
-function getAuthHeaders(): Record<string, string> {
+export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {};
   if (currentUserId) {
     headers["x-user-id"] = currentUserId;
   }
   return headers;
+}
+
+function mergeHeaders(headers?: HeadersInit): Headers {
+  const merged = new Headers(headers);
+  for (const [key, value] of Object.entries(getAuthHeaders())) {
+    if (!merged.has(key)) {
+      merged.set(key, value);
+    }
+  }
+  return merged;
 }
 
 async function throwIfResNotOk(res: Response) {
@@ -40,6 +50,31 @@ export async function apiRequest(
 
   await throwIfResNotOk(res);
   return res;
+}
+
+export async function apiFetch(
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  return fetch(url, {
+    ...init,
+    headers: mergeHeaders(init?.headers),
+    credentials: "include",
+  });
+}
+
+export async function apiFetchJson<T>(
+  url: string,
+  init?: RequestInit,
+): Promise<T> {
+  const res = await apiFetch(url, init);
+  await throwIfResNotOk(res);
+
+  if (res.status === 204) {
+    return undefined as T;
+  }
+
+  return res.json() as Promise<T>;
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";

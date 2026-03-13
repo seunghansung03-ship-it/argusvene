@@ -8,52 +8,96 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
-  type User,
+  type User as FirebaseUser,
 } from "firebase/auth";
+import { isDevAuthBypassEnabled, type DevAuthUser } from "./dev-auth";
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.firebasestorage.app`,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+export type User = DevAuthUser;
+
+const defaultFirebaseConfig = {
+  apiKey: "AIzaSyDvLRDUmC4BAkfyTacmuMxkRzbqMfJHPkE",
+  projectId: "argusvene",
+  appId: "1:757572510741:web:a0098482cd6d9469e9da1c",
 };
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const googleProvider = new GoogleAuthProvider();
+const firebaseProjectId = import.meta.env.VITE_FIREBASE_PROJECT_ID || defaultFirebaseConfig.projectId;
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || defaultFirebaseConfig.apiKey,
+  authDomain: `${firebaseProjectId}.firebaseapp.com`,
+  projectId: firebaseProjectId,
+  storageBucket: `${firebaseProjectId}.firebasestorage.app`,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || defaultFirebaseConfig.appId,
+};
+
+const hasFirebaseConfig = Boolean(
+  firebaseConfig.apiKey &&
+  firebaseConfig.projectId &&
+  firebaseConfig.appId,
+);
+
+const app = hasFirebaseConfig ? initializeApp(firebaseConfig) : null;
+const auth = app ? getAuth(app) : null;
+const googleProvider = auth ? new GoogleAuthProvider() : null;
+
+function mapFirebaseUser(user: FirebaseUser): User {
+  return {
+    uid: user.uid,
+    email: user.email,
+    displayName: user.displayName,
+    photoURL: user.photoURL,
+  };
+}
+
+function requireAuth() {
+  if (!auth || !googleProvider) {
+    throw new Error("Firebase auth is not configured. Set VITE_FIREBASE_* or enable VITE_DEV_AUTH_BYPASS=true.");
+  }
+
+  return { auth, googleProvider };
+}
 
 export async function loginWithGoogle() {
+  const { auth, googleProvider } = requireAuth();
   const result = await signInWithPopup(auth, googleProvider);
-  return result.user;
+  return mapFirebaseUser(result.user);
 }
 
 export async function loginWithEmail(email: string, password: string) {
+  const { auth } = requireAuth();
   const result = await signInWithEmailAndPassword(auth, email, password);
-  return result.user;
+  return mapFirebaseUser(result.user);
 }
 
 export async function signUpWithEmail(email: string, password: string, displayName?: string) {
+  const { auth } = requireAuth();
   const result = await createUserWithEmailAndPassword(auth, email, password);
   if (displayName && result.user) {
     await updateProfile(result.user, { displayName });
   }
-  return result.user;
+  return mapFirebaseUser(result.user);
 }
 
 export async function logout() {
+  if (isDevAuthBypassEnabled) return;
+  if (!auth) return;
   await signOut(auth);
 }
 
 export function onAuthChange(callback: (user: User | null) => void) {
-  return onAuthStateChanged(auth, callback);
+  if (isDevAuthBypassEnabled || !auth) {
+    callback(null);
+    return () => {};
+  }
+
+  return onAuthStateChanged(auth, (user) => callback(user ? mapFirebaseUser(user) : null));
 }
 
 export async function getIdToken(): Promise<string | null> {
+  if (!auth) return null;
   const user = auth.currentUser;
   if (!user) return null;
   return user.getIdToken();
 }
 
 export { auth };
-export type { User };

@@ -2,12 +2,14 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { onAuthChange, loginWithGoogle, loginWithEmail, signUpWithEmail, logout, type User } from "@/lib/firebase";
 import { setCurrentUserId, queryClient } from "@/lib/queryClient";
 import { setUserIdGetter } from "@/lib/api";
+import { createDevAuthUser, isDevAuthBypassEnabled } from "@/lib/dev-auth";
 
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   signingIn: boolean;
   error: string | null;
+  isDevBypass: boolean;
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   registerWithEmail: (email: string, password: string, displayName?: string) => Promise<void>;
@@ -57,6 +59,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   useEffect(() => {
+    if (isDevAuthBypassEnabled) {
+      const demoUser = createDevAuthUser();
+      setUser(demoUser);
+      setCurrentUserId(demoUser.uid);
+      setLoading(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/workspaces"] });
+      return () => {};
+    }
+
     const unsubscribe = onAuthChange((firebaseUser) => {
       setUser(firebaseUser);
       setCurrentUserId(firebaseUser?.uid || null);
@@ -72,6 +83,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       setSigningIn(true);
       setError(null);
+      if (isDevAuthBypassEnabled) {
+        const demoUser = createDevAuthUser();
+        setUser(demoUser);
+        setCurrentUserId(demoUser.uid);
+        return;
+      }
       await authFn();
     } catch (e: any) {
       const msg = friendlyError(e);
@@ -92,6 +109,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const handleSignOut = async () => {
     try {
       setError(null);
+      if (isDevAuthBypassEnabled) {
+        return;
+      }
       await logout();
     } catch (e: any) {
       setError(e?.message || "Sign out failed.");
@@ -104,6 +124,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       signingIn,
       error,
+      isDevBypass: isDevAuthBypassEnabled,
       signInWithGoogle: signInWithGoogleHandler,
       signInWithEmail: signInWithEmailHandler,
       registerWithEmail: registerWithEmailHandler,

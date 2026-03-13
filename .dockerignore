@@ -4,6 +4,8 @@ dist
 .gitignore
 .playwright
 .cache
+.env
+.env.*
 **/chrome-linux64/
 **/chrome-headless-shell-linux64/
 attached_assets

@@ -1,81 +1,104 @@
-# ArgusVene - Google Cloud Run 배포 가이드
+# ArgusVene Deployment
 
-## 1. GitHub Push 준비 (Git 히스토리에서 큰 파일 제거)
+## Local-First Workflow
 
-Shell에서 실행:
+1. Copy `.env.example` to `.env`.
+2. Start PostgreSQL locally:
 
 ```bash
-# Git 캐시에서 Playwright 바이너리 제거
-git filter-branch --force --index-filter \
-  'git rm -r --cached --ignore-unmatch .playwright/ .cache/' \
-  --prune-empty HEAD
-
-# 새 파일 추가 및 커밋
-git add .gitignore .dockerignore Dockerfile server/browser-manager.ts
-git commit -m "Add Docker support for Cloud Run deployment"
-
-# GitHub에 강제 push
-git push --force origin main
+docker compose up -d postgres
 ```
 
-## 2. Google Cloud Run 배포
-
-### 사전 준비
-- Google Cloud CLI 설치 (https://cloud.google.com/sdk/docs/install)
-- Cloud SQL (PostgreSQL) 인스턴스 생성
-
-### 배포 명령어
+3. Push the schema:
 
 ```bash
-# GCP 프로젝트 설정
+npm run db:push
+```
+
+4. Start the app:
+
+```bash
+npm run dev
+```
+
+For the fastest local UI loop, you can bypass Firebase sign-in:
+
+```bash
+VITE_DEV_AUTH_BYPASS=true
+```
+
+### Required local environment
+
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `GOOGLE_API_KEY` | Gemini API for meetings, browser vision, and Gemini Live |
+| `VITE_FIREBASE_API_KEY` | Firebase Auth client config |
+| `VITE_FIREBASE_PROJECT_ID` | Firebase Auth client config |
+| `VITE_FIREBASE_APP_ID` | Firebase Auth client config |
+
+### Optional local environment
+
+| Variable | Purpose |
+| --- | --- |
+| `GEMINI_BASE_URL` | Gemini-compatible gateway override |
+| `ELEVENLABS_API_KEY` | ElevenLabs TTS |
+| `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Chromium override for browser automation |
+
+## GCP Baseline
+
+Use Google Cloud Run for the first public release, but keep the service single-instance for now.
+
+Why:
+- Meeting live state, Gemini Live sessions, and the browser automation layer are still stored in memory.
+- Horizontal scaling would make browser/live session routing unstable until those sessions are externalized.
+
+### Recommended first production shape
+
+- Cloud Run service
+- `min-instances=1`
+- `max-instances=1`
+- Cloud SQL for PostgreSQL
+- Secret Manager for server secrets
+- Custom domain on Cloud Run through the Google Cloud load balancer path
+
+### Build and deploy
+
+```bash
 gcloud config set project YOUR_PROJECT_ID
 
-# Cloud Run에 직접 배포 (소스에서 빌드)
+gcloud builds submit \
+  --tag asia-northeast3-docker.pkg.dev/YOUR_PROJECT_ID/argusvene/argusvene:latest
+
 gcloud run deploy argusvene \
-  --source . \
+  --image asia-northeast3-docker.pkg.dev/YOUR_PROJECT_ID/argusvene/argusvene:latest \
   --region asia-northeast3 \
   --allow-unauthenticated \
-  --memory 1Gi \
-  --cpu 2 \
   --port 8080 \
-  --set-env-vars "DATABASE_URL=YOUR_DB_URL" \
-  --set-env-vars "ELEVENLABS_API_KEY=YOUR_KEY" \
-  --set-env-vars "SESSION_SECRET=YOUR_SECRET" \
-  --set-env-vars "VITE_FIREBASE_API_KEY=YOUR_KEY" \
-  --set-env-vars "VITE_FIREBASE_APP_ID=YOUR_APP_ID" \
-  --set-env-vars "VITE_FIREBASE_PROJECT_ID=argusvene"
-```
-
-### 또는 Docker로 직접 빌드 후 배포
-
-```bash
-# Artifact Registry에 이미지 빌드 & push
-gcloud builds submit --tag gcr.io/YOUR_PROJECT_ID/argusvene
-
-# Cloud Run 배포
-gcloud run deploy argusvene \
-  --image gcr.io/YOUR_PROJECT_ID/argusvene \
-  --region asia-northeast3 \
-  --allow-unauthenticated \
-  --memory 1Gi \
   --cpu 2 \
-  --port 8080
+  --memory 2Gi \
+  --timeout 900 \
+  --min-instances 1 \
+  --max-instances 1 \
+  --session-affinity \
+  --set-secrets DATABASE_URL=DATABASE_URL:latest \
+  --set-secrets GOOGLE_API_KEY=GOOGLE_API_KEY:latest \
+  --set-secrets ELEVENLABS_API_KEY=ELEVENLABS_API_KEY:latest \
+  --set-env-vars VITE_FIREBASE_API_KEY=YOUR_FIREBASE_API_KEY,VITE_FIREBASE_PROJECT_ID=YOUR_FIREBASE_PROJECT_ID,VITE_FIREBASE_APP_ID=YOUR_FIREBASE_APP_ID
 ```
 
-## 3. 환경변수 (필수)
+### Production notes
 
-| 변수명 | 설명 |
-|--------|------|
-| DATABASE_URL | PostgreSQL 연결 URL |
-| ELEVENLABS_API_KEY | ElevenLabs TTS API 키 |
-| SESSION_SECRET | 세션 암호화 키 |
-| VITE_FIREBASE_API_KEY | Firebase API 키 |
-| VITE_FIREBASE_APP_ID | Firebase App ID |
-| VITE_FIREBASE_PROJECT_ID | Firebase 프로젝트 ID |
-| PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH | (자동 설정됨: /usr/bin/chromium) |
+- Keep Cloud Run on one instance until browser/live session state is moved out of memory.
+- Store server secrets in Secret Manager, not `.env`.
+- Use Cloud SQL with a production `DATABASE_URL`.
+- Add your production domain to Firebase Authentication authorized domains before opening sign-in.
 
-## 4. 주의사항
+## Next Hardening Step
 
-- Cloud Run은 stateless이므로 브라우저 세션은 요청 간 유지되지 않습니다
-- 최소 1Gi 메모리, 2 CPU 권장 (Chromium 사용 시)
-- Cloud SQL 연결 시 Unix socket 또는 Cloud SQL Proxy 사용
+To scale beyond a single Cloud Run instance, move these out of process memory:
+
+- browser sessions
+- live meeting session state
+- websocket routing assumptions
+- transient meeting execution queues

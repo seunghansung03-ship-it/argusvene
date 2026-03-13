@@ -1,6 +1,7 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { env } from "./env";
 
-const CHROMIUM_PATH = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+const CHROMIUM_PATH = env.chromiumExecutablePath
   || "/nix/store/zi4f80l169xlmivz8vja8wlphq74qqk0-chromium-125.0.6422.141/bin/chromium";
 const SESSION_TIMEOUT = 10 * 60 * 1000;
 const SCREENSHOT_INTERVAL = 600;

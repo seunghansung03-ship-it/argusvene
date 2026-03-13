@@ -1,10 +1,9 @@
-import { GoogleGenAI } from "@google/genai";
 import type { BrowserAction } from "./browser-manager";
+import { createGoogleGenAI, getGeminiTextModel } from "./google-genai";
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY!,
-  httpOptions: { baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL },
-});
+function getVisionAI() {
+  return createGoogleGenAI();
+}
 
 const VISION_SYSTEM = `You are a browser automation agent. You see a screenshot of a web browser (1280x720 viewport).
 The user wants you to accomplish a task on this webpage.
@@ -49,9 +48,22 @@ Important rules:
 
 export interface VisionResult {
   thinking: string;
-  action: BrowserAction & { type: string; url?: string };
+  action: VisionAction;
   status: "working" | "done" | "error";
   summary: string;
+}
+
+type VisionActionType = BrowserAction["type"] | "done" | "navigate";
+
+interface VisionAction {
+  type: VisionActionType;
+  x?: number;
+  y?: number;
+  text?: string;
+  key?: string;
+  deltaY?: number;
+  duration?: number;
+  url?: string;
 }
 
 export async function analyzeScreenshot(
@@ -64,8 +76,9 @@ export async function analyzeScreenshot(
     : "";
 
   try {
+    const ai = getVisionAI();
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: getGeminiTextModel(),
       contents: [
         {
           role: "user",
@@ -109,8 +122,9 @@ export async function analyzeScreenshot(
 
 export async function describeScreen(screenshotBase64: string): Promise<string> {
   try {
+    const ai = getVisionAI();
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: getGeminiTextModel(),
       contents: [
         {
           role: "user",

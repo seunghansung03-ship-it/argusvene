@@ -25,4 +25,4 @@ ENV PORT=8080
 
 EXPOSE 8080
 
-CMD ["node", "dist/index.cjs"]
+CMD ["sh", "-lc", "npm run db:push && node dist/index.cjs"]

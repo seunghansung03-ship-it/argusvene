@@ -10,6 +10,7 @@ import {
   decisions, type Decision, type InsertDecision,
   tasks, type Task, type InsertTask,
   workspaceMembers, type WorkspaceMember, type InsertWorkspaceMember,
+  workspaceFiles, type WorkspaceFile, type InsertWorkspaceFile,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -32,6 +33,7 @@ export interface IStorage {
   getAllMeetings(): Promise<Meeting[]>;
   getMeeting(id: number): Promise<Meeting | undefined>;
   createMeeting(meeting: InsertMeeting): Promise<Meeting>;
+  updateMeetingAgentIds(id: number, agentIds: number[]): Promise<Meeting | undefined>;
   updateMeetingStatus(id: number, status: string): Promise<Meeting | undefined>;
   updateMeetingWorldState(id: number, worldState: any): Promise<Meeting | undefined>;
 
@@ -58,6 +60,11 @@ export interface IStorage {
   removeWorkspaceMember(id: number): Promise<void>;
   getWorkspacesByMemberEmail(email: string): Promise<Workspace[]>;
   getWorkspacesByMemberUserId(userId: string): Promise<Workspace[]>;
+
+  getWorkspaceFiles(workspaceId: number): Promise<WorkspaceFile[]>;
+  getWorkspaceFile(id: number): Promise<WorkspaceFile | undefined>;
+  createWorkspaceFile(file: InsertWorkspaceFile): Promise<WorkspaceFile>;
+  deleteWorkspaceFile(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -124,6 +131,10 @@ export class DatabaseStorage implements IStorage {
   async createMeeting(meeting: InsertMeeting) {
     const [created] = await db.insert(meetings).values(meeting).returning();
     return created;
+  }
+  async updateMeetingAgentIds(id: number, agentIds: number[]) {
+    const [updated] = await db.update(meetings).set({ agentIds }).where(eq(meetings.id, id)).returning();
+    return updated;
   }
   async updateMeetingStatus(id: number, status: string) {
     const [updated] = await db.update(meetings).set({ status, endedAt: status === "ended" ? new Date() : undefined }).where(eq(meetings.id, id)).returning();
@@ -225,6 +236,21 @@ export class DatabaseStorage implements IStorage {
       or(...wsIds.map(id => eq(workspaces.id, id)))
     );
     return result;
+  }
+
+  async getWorkspaceFiles(workspaceId: number) {
+    return db.select().from(workspaceFiles).where(eq(workspaceFiles.workspaceId, workspaceId)).orderBy(desc(workspaceFiles.createdAt));
+  }
+  async getWorkspaceFile(id: number) {
+    const [file] = await db.select().from(workspaceFiles).where(eq(workspaceFiles.id, id));
+    return file;
+  }
+  async createWorkspaceFile(file: InsertWorkspaceFile) {
+    const [created] = await db.insert(workspaceFiles).values(file).returning();
+    return created;
+  }
+  async deleteWorkspaceFile(id: number) {
+    await db.delete(workspaceFiles).where(eq(workspaceFiles.id, id));
   }
 }
 

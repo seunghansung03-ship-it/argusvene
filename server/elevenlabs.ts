@@ -1,6 +1,7 @@
 import { storage } from "./storage";
+import { env } from "./env";
 
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
+const ELEVENLABS_API_KEY = env.elevenLabsApiKey;
 const BASE_URL = "https://api.elevenlabs.io/v1";
 
 const DEFAULT_VOICE_MAP: Record<string, string> = {

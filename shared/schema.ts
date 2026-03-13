@@ -182,3 +182,23 @@ export const messages = pgTable("messages", {
   content: text("content").notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
+
+export const workspaceFiles = pgTable("workspace_files", {
+  id: serial("id").primaryKey(),
+  workspaceId: integer("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  originalName: text("original_name").notNull(),
+  mimeType: text("mime_type").notNull(),
+  size: integer("size").notNull(),
+  path: text("path").notNull(),
+  uploadedBy: text("uploaded_by"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertWorkspaceFileSchema = createInsertSchema(workspaceFiles).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type WorkspaceFile = typeof workspaceFiles.$inferSelect;
+export type InsertWorkspaceFile = z.infer<typeof insertWorkspaceFileSchema>;
