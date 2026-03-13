@@ -2,6 +2,7 @@ substitutions:
   _REGION: us-central1
   _AR_REPOSITORY: argusvene
   _IMAGE: web
+  _IMAGE_TAG: manual
   _SERVICE: argusvene-demo
   _RUNTIME_SERVICE_ACCOUNT: argusvene-run@argusvene.iam.gserviceaccount.com
   _CLOUD_SQL_INSTANCE: argusvene:us-central1:argusvene-db
@@ -27,7 +28,7 @@ steps:
     args:
       - build
       - -t
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE}:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE}:${_IMAGE_TAG}
       - --build-arg
       - VITE_FIREBASE_API_KEY=${_VITE_FIREBASE_API_KEY}
       - --build-arg
@@ -41,7 +42,7 @@ steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE}:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE}:${_IMAGE_TAG}
 
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
@@ -51,7 +52,7 @@ steps:
       - ${_SERVICE}
       - --platform=managed
       - --region=${_REGION}
-      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE}:$SHORT_SHA
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE}:${_IMAGE_TAG}
       - --service-account=${_RUNTIME_SERVICE_ACCOUNT}
       - --port=8080
       - --cpu=2
@@ -66,4 +67,4 @@ steps:
       - --quiet
 
 images:
-  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE}:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPOSITORY}/${_IMAGE}:${_IMAGE_TAG}

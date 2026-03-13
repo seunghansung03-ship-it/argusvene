@@ -55,6 +55,7 @@ jobs:
             _AR_REPOSITORY="${GAR_REPOSITORY}",\
             _SERVICE="${CLOUD_RUN_SERVICE}",\
             _IMAGE="web",\
+            _IMAGE_TAG="${GITHUB_SHA}",\
             _RUNTIME_SERVICE_ACCOUNT="${CLOUD_RUN_RUNTIME_SA}",\
             _CLOUD_SQL_INSTANCE="${CLOUD_SQL_INSTANCE}",\
             _VITE_FIREBASE_API_KEY="${VITE_FIREBASE_API_KEY}",\

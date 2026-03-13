@@ -114,6 +114,7 @@ gcloud builds submit \
   _AR_REPOSITORY=argusvene,\
   _SERVICE=argusvene-demo,\
   _IMAGE=web,\
+  _IMAGE_TAG=manual,\
   _RUNTIME_SERVICE_ACCOUNT=argusvene-run@argusvene.iam.gserviceaccount.com,\
   _CLOUD_SQL_INSTANCE=argusvene:us-central1:argusvene-db,\
   _VITE_FIREBASE_API_KEY=YOUR_FIREBASE_API_KEY,\
