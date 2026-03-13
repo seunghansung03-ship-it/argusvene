@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, Mail } from "lucide-react";
 import { SiGoogle } from "react-icons/si";
+import { BrandMark } from "@/components/brand-mark";
 
 export default function LoginPage() {
   const { user, loading, signingIn, error, signInWithGoogle, signInWithEmail, registerWithEmail, clearError } = useAuth();
@@ -48,9 +49,7 @@ export default function LoginPage() {
       <Card className="w-full max-w-md p-8 space-y-6">
         <div className="text-center space-y-2">
           <div className="flex items-center justify-center gap-2 mb-4">
-            <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-lg">A</span>
-            </div>
+            <BrandMark className="h-10 w-10 rounded-2xl" />
             <h1 className="text-2xl font-bold tracking-tight">ArgusVene</h1>
           </div>
           <p className="text-muted-foreground text-sm">

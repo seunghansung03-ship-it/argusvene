@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "wouter";
 import { Settings, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { BrandMark } from "@/components/brand-mark";
 
 interface ProductShellProps {
   title: string;
@@ -34,7 +35,8 @@ export function ProductShell({
               </Link>
             ) : null}
             <Link href="/">
-              <button type="button" className="text-left">
+              <button type="button" className="flex items-center gap-3 text-left">
+                <BrandMark className="h-8 w-8 rounded-xl" />
                 <div className="text-sm font-semibold text-slate-900">ArgusVene</div>
               </button>
             </Link>
