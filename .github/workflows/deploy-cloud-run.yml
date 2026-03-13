@@ -1,0 +1,70 @@
+name: Deploy Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-cloud-run
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GAR_REPOSITORY: ${{ vars.GAR_REPOSITORY }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      CLOUD_RUN_RUNTIME_SA: ${{ vars.CLOUD_RUN_RUNTIME_SA }}
+      CLOUD_SQL_INSTANCE: ${{ vars.CLOUD_SQL_INSTANCE }}
+      VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+      VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+      VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Submit Cloud Build
+        run: |
+          gcloud builds submit \
+            --project "${GCP_PROJECT_ID}" \
+            --config cloudbuild.yaml \
+            --substitutions \
+            _REGION="${GCP_REGION}",\
+            _AR_REPOSITORY="${GAR_REPOSITORY}",\
+            _SERVICE="${CLOUD_RUN_SERVICE}",\
+            _IMAGE="web",\
+            _RUNTIME_SERVICE_ACCOUNT="${CLOUD_RUN_RUNTIME_SA}",\
+            _CLOUD_SQL_INSTANCE="${CLOUD_SQL_INSTANCE}",\
+            _VITE_FIREBASE_API_KEY="${VITE_FIREBASE_API_KEY}",\
+            _VITE_FIREBASE_PROJECT_ID="${VITE_FIREBASE_PROJECT_ID}",\
+            _VITE_FIREBASE_APP_ID="${VITE_FIREBASE_APP_ID}",\
+            _VITE_DEV_AUTH_BYPASS="false"
+
+      - name: Resolve deployed URL
+        run: |
+          URL="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format='value(status.url)')"
+          echo "Deployed to ${URL}"
+          echo "url=${URL}" >> "${GITHUB_OUTPUT}"
+        id: deploy_output

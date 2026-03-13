@@ -1,104 +1,87 @@
 # ArgusVene Deployment
 
-## Local-First Workflow
+This repository is configured for the Gemini Live Agent Challenge deployment path:
 
-1. Copy `.env.example` to `.env`.
-2. Start PostgreSQL locally:
+- public GitHub repository
+- Google Cloud Run runtime
+- Vertex AI Gemini model path
+- Cloud SQL Postgres
+- Cloud Build image pipeline
+- GitHub Actions deployment on push to `main`
 
-```bash
-docker compose up -d postgres
-```
+## One-time GCP setup
 
-3. Push the schema:
+1. Create or confirm these resources in project `argusvene`:
+   - Cloud Run service `argusvene-demo`
+   - Cloud SQL instance `argusvene-db`
+   - Secret Manager secret `database-url`
+   - Artifact Registry repository `argusvene`
+2. Ensure the Cloud Run runtime service account is:
+   - `argusvene-run@argusvene.iam.gserviceaccount.com`
+3. Ensure Firebase auth allows the final Cloud Run or custom domain.
 
-```bash
-npm run db:push
-```
+## One-time GitHub setup
 
-4. Start the app:
+Set these repository variables:
 
-```bash
-npm run dev
-```
+- `GCP_PROJECT_ID`
+- `GCP_REGION`
+- `GAR_REPOSITORY`
+- `CLOUD_RUN_SERVICE`
+- `CLOUD_RUN_RUNTIME_SA`
+- `CLOUD_SQL_INSTANCE`
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`
+- `GCP_DEPLOYER_SERVICE_ACCOUNT`
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_APP_ID`
 
-For the fastest local UI loop, you can bypass Firebase sign-in:
+## Automated deployment
 
-```bash
-VITE_DEV_AUTH_BYPASS=true
-```
+Push to `main` runs:
 
-### Required local environment
+- [.github/workflows/deploy-cloud-run.yml](./.github/workflows/deploy-cloud-run.yml)
+- [cloudbuild.yaml](./cloudbuild.yaml)
 
-| Variable | Purpose |
-| --- | --- |
-| `DATABASE_URL` | PostgreSQL connection string |
-| `GOOGLE_API_KEY` | Gemini API for meetings, browser vision, and Gemini Live |
-| `VITE_FIREBASE_API_KEY` | Firebase Auth client config |
-| `VITE_FIREBASE_PROJECT_ID` | Firebase Auth client config |
-| `VITE_FIREBASE_APP_ID` | Firebase Auth client config |
+The pipeline:
 
-### Optional local environment
+1. Authenticates with Workload Identity Federation
+2. Runs `npm run check`
+3. Builds the Docker image with explicit `VITE_*` build args
+4. Pushes the image to Artifact Registry
+5. Deploys the image to Cloud Run
 
-| Variable | Purpose |
-| --- | --- |
-| `GEMINI_BASE_URL` | Gemini-compatible gateway override |
-| `ELEVENLABS_API_KEY` | ElevenLabs TTS |
-| `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | Chromium override for browser automation |
-
-## GCP Baseline
-
-Use Google Cloud Run for the first public release, but keep the service single-instance for now.
-
-Why:
-- Meeting live state, Gemini Live sessions, and the browser automation layer are still stored in memory.
-- Horizontal scaling would make browser/live session routing unstable until those sessions are externalized.
-
-### Recommended first production shape
-
-- Cloud Run service
-- `min-instances=1`
-- `max-instances=1`
-- Cloud SQL for PostgreSQL
-- Secret Manager for server secrets
-- Custom domain on Cloud Run through the Google Cloud load balancer path
-
-### Build and deploy
+## Manual fallback
 
 ```bash
-gcloud config set project YOUR_PROJECT_ID
-
 gcloud builds submit \
-  --tag asia-northeast3-docker.pkg.dev/YOUR_PROJECT_ID/argusvene/argusvene:latest
-
-gcloud run deploy argusvene \
-  --image asia-northeast3-docker.pkg.dev/YOUR_PROJECT_ID/argusvene/argusvene:latest \
-  --region asia-northeast3 \
-  --allow-unauthenticated \
-  --port 8080 \
-  --cpu 2 \
-  --memory 2Gi \
-  --timeout 900 \
-  --min-instances 1 \
-  --max-instances 1 \
-  --session-affinity \
-  --set-secrets DATABASE_URL=DATABASE_URL:latest \
-  --set-secrets GOOGLE_API_KEY=GOOGLE_API_KEY:latest \
-  --set-secrets ELEVENLABS_API_KEY=ELEVENLABS_API_KEY:latest \
-  --set-env-vars VITE_FIREBASE_API_KEY=YOUR_FIREBASE_API_KEY,VITE_FIREBASE_PROJECT_ID=YOUR_FIREBASE_PROJECT_ID,VITE_FIREBASE_APP_ID=YOUR_FIREBASE_APP_ID
+  --project argusvene \
+  --config cloudbuild.yaml \
+  --substitutions \
+  _REGION=us-central1,\
+  _AR_REPOSITORY=argusvene,\
+  _SERVICE=argusvene-demo,\
+  _IMAGE=web,\
+  _RUNTIME_SERVICE_ACCOUNT=argusvene-run@argusvene.iam.gserviceaccount.com,\
+  _CLOUD_SQL_INSTANCE=argusvene:us-central1:argusvene-db,\
+  _VITE_FIREBASE_API_KEY=YOUR_FIREBASE_API_KEY,\
+  _VITE_FIREBASE_PROJECT_ID=argusvene,\
+  _VITE_FIREBASE_APP_ID=YOUR_FIREBASE_APP_ID,\
+  _VITE_DEV_AUTH_BYPASS=false
 ```
 
-### Production notes
+## Runtime constraints
 
-- Keep Cloud Run on one instance until browser/live session state is moved out of memory.
-- Store server secrets in Secret Manager, not `.env`.
-- Use Cloud SQL with a production `DATABASE_URL`.
-- Add your production domain to Firebase Authentication authorized domains before opening sign-in.
+- Cloud Run stays single-instance for now
+- `DATABASE_URL` comes from Secret Manager
+- Vertex AI is enabled with:
+  - `GOOGLE_GENAI_USE_VERTEXAI=true`
+  - `GOOGLE_CLOUD_PROJECT=argusvene`
+  - `GOOGLE_CLOUD_LOCATION=us-central1`
 
-## Next Hardening Step
+## Required follow-up before judges use it
 
-To scale beyond a single Cloud Run instance, move these out of process memory:
-
-- browser sessions
-- live meeting session state
-- websocket routing assumptions
-- transient meeting execution queues
+- Add production and demo domains to Firebase authorized domains
+- Confirm the latest `main` push completed in GitHub Actions
+- Confirm the deployed Cloud Run revision is healthy
+- Record the public URL in the submission form
